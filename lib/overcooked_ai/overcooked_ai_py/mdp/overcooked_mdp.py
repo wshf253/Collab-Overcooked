@@ -467,6 +467,7 @@ class OvercookedGridworld(object):
                  layout_name="unnamed_layout",
                  old_dynamics=False, 
                  need_dish={},
+                 wrong_delivery_penalty=0,
                  **kwargs
                  ):
         """
@@ -477,6 +478,8 @@ class OvercookedGridworld(object):
         cook_time: amount of timesteps required for a soup to cook
         delivery_reward: amount of reward given per delivery
         rew_shaping_params: reward given for completion of specific subgoals
+        wrong_delivery_penalty: points subtracted when a delivered item does not
+            match the current order (0 keeps the original benchmark behaviour)
         """
         # self._configure_recipes(start_all_orders, num_items_for_soup, **kwargs)
         # self.start_all_orders = (
@@ -515,6 +518,7 @@ class OvercookedGridworld(object):
         self.soup_cooking_time = cook_time
         self.num_items_for_soup = num_items_for_soup
         self.delivery_reward = delivery_reward
+        self.wrong_delivery_penalty = wrong_delivery_penalty
         self.reward_shaping_params = NO_REW_SHAPING_PARAMS if rew_shaping_params is None else rew_shaping_params
         self.layout_name = layout_name
         self.interact_actions = {}
@@ -1284,8 +1288,8 @@ class OvercookedGridworld(object):
                     state.order_list = self.add_elements_based_on_probability(state.order_list, self.order_probability)
                 return state, self.delivery_reward
 
-        
-        return state, 0
+        # Wrong item, or a plated/unplated mismatch: the order stays open.
+        return state, -self.wrong_delivery_penalty
 
     def match_recipe(self, soup_obj, utensil_name):
         soup_type, _, _ = soup_obj.state
