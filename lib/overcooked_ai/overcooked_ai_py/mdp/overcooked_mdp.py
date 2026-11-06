@@ -1351,7 +1351,9 @@ class OvercookedGridworld(object):
 
                             x_pot, y_pot = utensil_pos[0], utensil_pos[1]
 
-                            if x_pot != x and y_pot != y: continue
+                            # Only the batch in the started utensil (the original
+                            # `and` also matched batches sharing a row or column).
+                            if (x_pot, y_pot) != (x, y): continue
 
                             # x_pot, y_pot = int(x_pot), int(y_pot)
 

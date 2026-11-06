@@ -163,3 +163,6 @@ src/batch_run.sh
 src/embedding_cache.json
 
 
+
+# coop research setting
+outputs/

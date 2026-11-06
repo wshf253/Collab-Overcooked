@@ -8,6 +8,10 @@ An episode keeps issuing orders until the horizon ends:
   ``delivery_reward`` and opens the next order in the sequence.
 * A wrong delivery (wrong item, or a plated/unplated mismatch) costs
   ``wrong_delivery_penalty`` points; the item is consumed and the order stays open.
+* Interactions the legacy MDP cannot handle safely (e.g. adding an ingredient to
+  a utensil that is already processing, which raises an assertion) become
+  "stay" and are reported in ``info['rejected']``. The rules are the same as in
+  the human-play server (``human_coop.session.Session.safe_decision``).
 
 The wrapper only configures the MDP and records what happened. Movement,
 utensils, recipes and delivery rules are the original Collab-Overcooked ones.
@@ -17,12 +21,38 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from overcooked_ai_py.mdp.actions import Action
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, OvercookedState
 
 from .orders import Menu, make_order_sequence, normalize_menu
 
 DELIVER_ACTION = "deliver_soup()"
+START = "[START]"
+
+
+def unsafe_interact_reason(mdp: OvercookedGridworld, state: OvercookedState, index: int,
+                           parameter: Any) -> Optional[str]:
+    """Why player ``index`` must not interact now, or None if it may."""
+    player = state.players[index]
+    pos = Action.move_in_direction(player.position, player.orientation)
+    tile = mdp.get_terrain_type_at_pos(pos)
+    obj, held = state.objects.get(pos), player.held_object
+    if tile == "I":
+        if parameter not in mdp.default_ingredients:
+            return "the dispenser needs a raw ingredient name"
+    elif tile in mdp.interactive_terrain:
+        if parameter == START:
+            if held or not obj or obj.catagory != "semi-finished" or obj.state[2] != 0:
+                return "starting needs empty hands and a loaded utensil that is not running"
+        elif held:
+            if held.name == "dish" and (not obj or obj.catagory != "finished"):
+                return "a dish can only collect finished food"
+            if held.name != "dish" and obj and not isinstance(obj.state[0], list):
+                return "the utensil is already processing or holds finished food"
+        elif obj and obj.catagory == "semi-finished":
+            return "the utensil is loaded or running; start it or wait until it is done"
+    return None
 
 
 @dataclass
@@ -58,6 +88,7 @@ class EpisodeLog:
     order_sequence: List[str]
     orders: List[OrderRecord] = field(default_factory=list)
     deliveries: List[Delivery] = field(default_factory=list)
+    rejected: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class ContinuousOrderEnv:
@@ -73,6 +104,7 @@ class ContinuousOrderEnv:
             which can never run out (at most one delivery per agent per step,
             and every order needs several steps of preparation).
         no_repeat: never issue the same order twice in a row.
+        sanitize: turn unsafe interactions into "stay" (see module docstring).
     """
 
     def __init__(
@@ -83,6 +115,7 @@ class ContinuousOrderEnv:
         wrong_delivery_penalty: float = 20,
         max_orders: Optional[int] = None,
         no_repeat: bool = False,
+        sanitize: bool = True,
     ):
         if horizon < 1:
             raise ValueError("horizon must be >= 1")
@@ -97,6 +130,7 @@ class ContinuousOrderEnv:
         self.horizon = horizon
         self.max_orders = max_orders or horizon
         self.no_repeat = no_repeat
+        self.sanitize = sanitize
         # Continuous mode: our sequence replaces the layout's random replenishment.
         self.mdp.one_task_mode = False
         self.mdp.order_probability = {}
@@ -133,6 +167,17 @@ class ContinuousOrderEnv:
             raise RuntimeError("Episode is over; call reset(seed)")
         t = self.env.t
         prev = self.env.state
+        joint_action = list(joint_action)
+        parm = list(parm) if parm is not None else [None] * len(joint_action)
+        rejected = []
+        if self.sanitize:
+            for i, action in enumerate(joint_action):
+                if action != Action.INTERACT:
+                    continue
+                reason = unsafe_interact_reason(self.mdp, prev, i, parm[i])
+                if reason:
+                    rejected.append({"t": t, "agent": i, "parameter": parm[i], "reason": reason})
+                    joint_action[i], parm[i] = Action.STAY, None
         held = [p.held_object for p in prev.players]
         open_orders = list(prev.order_list)
 
@@ -140,7 +185,8 @@ class ContinuousOrderEnv:
         deliveries = self._resolve_deliveries(t, state, held, open_orders)
         self._check_consistency(reward, deliveries, open_orders, state)
         self.score += reward
-        info = dict(info, deliveries=deliveries)
+        self.log.rejected.extend(rejected)
+        info = dict(info, deliveries=deliveries, rejected=rejected)
         return state, reward, done, info
 
     # ------------------------------------------------------------------ #
@@ -229,6 +275,7 @@ class ContinuousOrderEnv:
             "score": self.score,
             "orders_completed": len(completed),
             "wrong_deliveries": sum(not d.correct for d in log.deliveries),
+            "rejected_interactions": len(log.rejected),
             "mean_order_steps": sum(durations) / len(durations) if durations else None,
             "orders": [dict(asdict(o), duration=o.duration) for o in log.orders],
             "deliveries": [asdict(d) for d in log.deliveries],
