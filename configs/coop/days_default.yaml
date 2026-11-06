@@ -1,0 +1,22 @@
+# Default multi-day design: every persona for 5 days x 3 episodes, 3 run seeds.
+# Each (persona, run seed) is one run: the same partner every day, and the ego's
+# memory carried over. Orders for (run seed, day, episode) are the same for all personas.
+name: days_default
+layout: new_env
+menu:                   # equal weights; use {name: weight} for others
+  - boiled_egg
+  - boiled_mushroom
+  - boiled_corn_slices
+  - baked_carrot_soup
+  - sliced_eggplant_and_chickpea_stew
+horizon: 400
+wrong_delivery_penalty: 20
+no_repeat: false
+days: 5
+episodes_per_day: 3
+ego_index: 0
+personas: [steady, prep_first, serve_first, slow, sloppy, flaky]
+run_seeds: [0, 1, 2]
+agent: {type: scripted, persona: steady}
+# custom_personas:      # define more partner types with any Traits fields, e.g.
+#   slow_and_flaky: {step_period: 2, decision_delay: 2, abandon_rate: 0.08}

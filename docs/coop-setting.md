@@ -89,6 +89,50 @@ more than as a different job mix: in a split kitchen with one open order, a
 player rarely has jobs from two stages to choose between. Maps where both
 players can do every stage will separate the preference types better.
 
+## Days (`coop.days`)
+
+A **run** is one partner persona and one run seed, played for `days` days of
+`episodes_per_day` continuous-order episodes. The partner stays the same for the
+whole run, and the ego's memory carries over between episodes and days. A
+config lists personas and run seeds; each pair is a separate run with its own
+memory.
+
+```bash
+PYTHONPATH=src:lib/overcooked_ai python -m coop.days configs/coop/days_smoke.yaml --out outputs/days_smoke
+```
+
+- **Configs** live in `configs/coop/`: `days_smoke.yaml` (2 days × 2 episodes)
+  and `days_default.yaml` (6 personas × 3 run seeds × 5 days × 3 episodes).
+  `custom_personas` defines new partner types from any `Traits` fields.
+  Command-line overrides: `--personas`, `--run-seeds`, `--days`,
+  `--episodes-per-day`, `--horizon`.
+- **Paired orders.** The orders for (run seed, day, episode) are the same for
+  every persona, so partners are compared on identical order sequences.
+- **Ego agents** implement `coop.agents.Agent`: `begin_episode`, `act`,
+  `end_episode(result)`, `end_day`, and `get_memory`/`set_memory`. Memory must
+  be a JSON-serialisable dict and is the only thing kept between episodes.
+  `result` holds what happened in the kitchen (orders, deliveries, score),
+  never the partner's persona, traits or true jobs. The built-in
+  `scripted` ego (a simulated human, no memory) is the no-learning reference:
+  its day-to-day changes come only from the orders.
+- **Resume.** Rerun the same command with the same `--out` and finished episodes
+  are loaded, not replayed. A different config in the same `--out` is refused.
+- **Parallel runs:** `--workers N` runs N runs in separate processes.
+
+Output: `OUT/results.json` (every episode, plus a persona × day table), and per
+episode `OUT/runs/<persona>/seed<k>/dayDD/epEE/`:
+
+| file | contents |
+|---|---|
+| `summary.json` | orders, deliveries, score |
+| `steps.jsonl` | per step: actions, completed actions, positions, held items, deliveries, rejected actions |
+| `partner_truth.json` | partner persona, traits, true job per step, slips, abandoned jobs (evaluation only) |
+| `agent_log.json` | ego-side record |
+| `memory_after.json` | ego memory after the episode (after the day, for its last episode) |
+
+Size: about 0.23 MB per 400-step episode. The default config (270 episodes)
+writes about 63 MB and takes a few seconds with the scripted ego.
+
 ## Run on the lab server
 
 First time only (assumes the repository lives in `~/work/collab-overcooked`):
@@ -121,7 +165,7 @@ uv venv -p 3.11 .venv
 uv pip install -p .venv -r requirements-coop.txt
 ```
 
-Tests and the persona screen (CPU only):
+Tests, the persona screen and multi-day runs (CPU only):
 
 ```bash
 lab-run --new --gpus 0 -- .venv/bin/python -m unittest discover -s tests -v
@@ -129,12 +173,15 @@ lab-run --new --gpus 0 -- .venv/bin/python -m unittest discover -s tests -v
 ```bash
 lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.screen --out outputs/coop_screen.json
 ```
+```bash
+lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.days configs/coop/days_default.yaml --out outputs/days_default --workers 4
+```
 
 ## Not built yet
 
-Days (several episodes with the same partner), one shared prompt and action
-list for both agents, no messages (and no view of the teammate's plan), the
-partner-observation layer, and the LLM agent.
+One shared prompt and action list for both agents, no messages (and no view of
+the teammate's plan), the partner-observation layer, and the LLM agent with
+memory across days.
 
 ## Other environment changes
 
@@ -150,4 +197,4 @@ python -m unittest discover -s tests -v
 ```
 
 Tested with Python 3.11 and the pinned `requirements-coop.txt` (`numpy<2`: the
-legacy env uses `np.Inf`).
+legacy env uses `np.Inf`; `pyyaml` for configs).

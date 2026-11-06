@@ -1,0 +1,12 @@
+# Quick check of the multi-day pipeline: 2 days x 2 episodes, short episodes.
+name: days_smoke
+layout: new_env
+menu: [boiled_egg, boiled_mushroom, baked_carrot_soup]
+horizon: 150
+wrong_delivery_penalty: 20
+days: 2
+episodes_per_day: 2
+ego_index: 0            # ego plays slot 0 (right side: pot, oven, serving); the partner slot 1
+personas: [steady, slow]
+run_seeds: [0]
+agent: {type: scripted, persona: steady}   # no-memory reference ego
