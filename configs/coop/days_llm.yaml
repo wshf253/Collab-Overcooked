@@ -1,0 +1,40 @@
+# LLM ego with a simulated human partner, four conditions:
+#   direct      action only, no memory          (the LLM baseline)
+#   tom         writes what the partner is doing/tends to do before each action
+#   memory      reflects after each episode; notes about the partner carry over
+#   tom_memory  both
+# Every condition also gets a partner probe after each episode, scored against the
+# true persona. The scripted reference ego plays the same episodes, so the table
+# shows each condition's score minus the reference on identical orders.
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm --workers 16
+name: days_llm
+layout: new_env
+menu: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+days: 5
+episodes_per_day: 2
+ego_index: 0            # ego on the right (pot, oven, serving); the partner on the left (dispenser, board, blender, dishes)
+personas: [steady, prep_first, serve_first, slow, sloppy, flaky]
+run_seeds: [0, 1]
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL          # set by scripts/run_qwen38_days.sh
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS   # thinking off, picked by coop.check
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: true
+  max_memory_notes: 5
+  max_tokens: 300
+conditions:
+  direct: {tom: false, memory: false}
+  tom: {tom: true, memory: false}
+  memory: {tom: false, memory: true}
+  tom_memory: {tom: true, memory: true}
+reference_agent: {type: scripted, persona: steady}

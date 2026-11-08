@@ -73,6 +73,16 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(**{k: str(v) for k, v in kw.items()}), self.assertRaises(ValueError):
                 small_config(**kw)
 
+    def test_conditions_merge_onto_the_base_agent(self):
+        cfg = small_config(agent={"type": "llm", "backend": {"type": "mock", "seed": 1}, "probe": True},
+                           conditions={"a": {"tom": True}, "b": {"backend": {"seed": 2}}})
+        self.assertEqual(cfg.condition_agent("a"),
+                         {"type": "llm", "backend": {"type": "mock", "seed": 1}, "probe": True, "tom": True})
+        self.assertEqual(cfg.condition_agent("b")["backend"], {"type": "mock", "seed": 2})
+        for bad in ({"_x": {}}, {}, {"a/b": {}}):
+            with self.subTest(conditions=bad), self.assertRaises(ValueError):
+                small_config(conditions=bad)
+
     def test_yaml_config_and_unknown_keys(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "c.yaml"
@@ -100,8 +110,8 @@ class RunTests(unittest.TestCase):
     def run_cfg(self, cfg, out=None):
         return run_all(cfg, out or self.tmp / "out", log=silent)
 
-    def episode_dir(self, persona, day, ep, out=None):
-        return (out or self.tmp / "out") / "runs" / persona / "seed0" / f"day{day:02d}" / f"ep{ep:02d}"
+    def episode_dir(self, persona, day, ep, out=None, cond="main"):
+        return (out or self.tmp / "out") / "runs" / cond / persona / "seed0" / f"day{day:02d}" / f"ep{ep:02d}"
 
     def test_outputs_and_paired_orders(self):
         res = self.run_cfg(small_config())
@@ -123,8 +133,21 @@ class RunTests(unittest.TestCase):
         seeds = {json.loads((self.episode_dir("steady", d, e) / "summary.json").read_text())["seed"]
                  for d in (1, 2) for e in (1, 2)}
         self.assertEqual(len(seeds), 4)
-        self.assertEqual(set(res["table"]), {"steady", "slow"})
-        self.assertEqual(res["table"]["steady"]["1"]["episodes"], 2)
+        self.assertEqual(set(res["table"]), {"main", "_reference"})
+        self.assertEqual(set(res["table"]["main"]), {"steady", "slow"})
+        self.assertEqual(res["table"]["main"]["steady"]["1"]["episodes"], 2)
+        # The reference ego plays the same episodes; vs_reference is the paired difference.
+        for persona in ("steady", "slow"):
+            for day in (1, 2):
+                diffs = []
+                for ep in (1, 2):
+                    a = json.loads((self.episode_dir(persona, day, ep) / "summary.json").read_text())
+                    b = json.loads((self.episode_dir(persona, day, ep, cond="_reference") / "summary.json").read_text())
+                    self.assertEqual(a["seed"], b["seed"])
+                    self.assertEqual(a["orders"][0]["name"], b["orders"][0]["name"])
+                    diffs.append(a["score"] - b["score"])
+                self.assertAlmostEqual(res["table"]["main"][persona][str(day)]["vs_reference"], sum(diffs) / 2)
+                self.assertIsNone(res["table"]["_reference"][persona][str(day)]["vs_reference"])
 
     def test_memory_carries_over_and_closes_days(self):
         self.run_cfg(small_config(personas=["steady"]))
@@ -167,8 +190,8 @@ class RunTests(unittest.TestCase):
         res = self.run_cfg(small_config(personas=["steady"], agent={"type": "broken"}))
         self.assertEqual(res["runs"][0]["status"], "error")
         self.assertIn("agent broke at t=5",
-                      (self.tmp / "out" / "runs" / "steady" / "seed0" / "error.log").read_text())
-        self.assertEqual(res["table"]["steady"], {})
+                      (self.tmp / "out" / "runs" / "main" / "steady" / "seed0" / "error.log").read_text())
+        self.assertEqual(res["table"]["main"]["steady"], {})
 
 
 if __name__ == "__main__":

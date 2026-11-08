@@ -36,18 +36,17 @@ using the same interaction rules as every other agent.
 from __future__ import annotations
 
 import random
-from collections import Counter, deque
+from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from overcooked_ai_py.mdp.actions import Action, Direction
+from overcooked_ai_py.mdp.actions import Action
 
 from .env import START
+from .nav import Pos, floor_cells, reach, step_towards, touches
 
 STAGES = ("prep", "cook", "serve")
 UTENSIL_STAGE = {"chopping_board": "prep", "blender": "prep", "pot": "cook", "oven": "cook"}
-DIRECTIONS = (Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)
-Pos = Tuple[int, int]
 
 
 @dataclass(frozen=True)
@@ -123,7 +122,7 @@ class SimulatedHuman:
         self.rng = random.Random(f"{seed}:{index}:{self.name}")
         terrain = mdp.terrain_mtx
         self.terrain = terrain
-        self.floor = {(x, y) for y, row in enumerate(terrain) for x, c in enumerate(row) if c == " "}
+        self.floor = floor_cells(terrain)
         self.cells: Dict[str, List[Pos]] = {}
         for y, row in enumerate(terrain):
             for x, c in enumerate(row):
@@ -238,29 +237,14 @@ class SimulatedHuman:
         self.objects = state.objects
         self.me = state.players[self.index]
         self.other = state.players[1 - self.index]
-        self.my_reach = self._reach(self.me.position)
-        self.other_reach = self._reach(self.other.position)
-
-    def _reach(self, start: Pos) -> set:
-        seen, queue = {start}, deque([start])
-        while queue:
-            x, y = queue.popleft()
-            for dx, dy in DIRECTIONS:
-                p = (x + dx, y + dy)
-                if p in self.floor and p not in seen:
-                    seen.add(p)
-                    queue.append(p)
-        return seen
-
-    @staticmethod
-    def _touches(pos: Pos, reach: set) -> bool:
-        return any((pos[0] + dx, pos[1] + dy) in reach for dx, dy in DIRECTIONS)
+        self.my_reach = reach(self.floor, self.me.position)
+        self.other_reach = reach(self.floor, self.other.position)
 
     def _mine(self, pos: Pos) -> bool:
-        return self._touches(pos, self.my_reach)
+        return touches(pos, self.my_reach)
 
     def _theirs(self, pos: Pos) -> bool:
-        return self._touches(pos, self.other_reach)
+        return touches(pos, self.other_reach)
 
     def _need_dish(self, item: str) -> bool:
         return bool(self.mdp.need_dish.get(item, 0))
@@ -474,25 +458,8 @@ class SimulatedHuman:
 
     def _go(self, targets: List[Pos]):
         """One primitive step towards facing the nearest target; INTERACT when facing it."""
-        targets = list(targets)
-        if not targets:
-            return Action.STAY
-        start, blocked = self.me.position, self.other.position
-        queue, seen = deque([(start, None)]), {start}
-        while queue:
-            pos, first = queue.popleft()
-            for tgt in targets:
-                d = (tgt[0] - pos[0], tgt[1] - pos[1])
-                if d in DIRECTIONS:
-                    if first is not None:
-                        return first
-                    return Action.INTERACT if self.me.orientation == d else d
-            for d in DIRECTIONS:
-                p = (pos[0] + d[0], pos[1] + d[1])
-                if p in self.floor and p != blocked and p not in seen:
-                    seen.add(p)
-                    queue.append((p, first or d))
-        return Action.STAY
+        return step_towards(self.floor, self.me.position, self.me.orientation,
+                            self.other.position, targets)
 
     def _log(self, t: int, status: str, action: Any = Action.STAY, parm: Any = None):
         self.trace.append({"t": t, "status": status,

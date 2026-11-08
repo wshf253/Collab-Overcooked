@@ -91,47 +91,98 @@ players can do every stage will separate the preference types better.
 
 ## Days (`coop.days`)
 
-A **run** is one partner persona and one run seed, played for `days` days of
-`episodes_per_day` continuous-order episodes. The partner stays the same for the
-whole run, and the ego's memory carries over between episodes and days. A
-config lists personas and run seeds; each pair is a separate run with its own
-memory.
+A **run** is one condition (ego agent settings), one partner persona and one
+run seed, played for `days` days of `episodes_per_day` continuous-order
+episodes. The partner stays the same for the whole run, and the ego's memory
+carries over between episodes and days. Every (condition, persona, run seed)
+is a separate run with its own memory.
 
 ```bash
 PYTHONPATH=src:lib/overcooked_ai python -m coop.days configs/coop/days_smoke.yaml --out outputs/days_smoke
 ```
 
-- **Configs** live in `configs/coop/`: `days_smoke.yaml` (2 days × 2 episodes)
-  and `days_default.yaml` (6 personas × 3 run seeds × 5 days × 3 episodes).
-  `custom_personas` defines new partner types from any `Traits` fields.
-  Command-line overrides: `--personas`, `--run-seeds`, `--days`,
-  `--episodes-per-day`, `--horizon`.
+- **Configs** live in `configs/coop/`:
+
+  | config | what |
+  |---|---|
+  | `days_smoke.yaml` | scripted ego, 2 days × 2 episodes |
+  | `days_default.yaml` | scripted ego, 6 personas × 3 run seeds × 5 days × 3 episodes |
+  | `days_llm_mock.yaml` | LLM ego with the offline mock backend (pipeline check, meaningless scores) |
+  | `days_llm.yaml` | LLM ego (Qwen via vLLM), 4 conditions × 6 personas × 2 run seeds × 5 days × 2 episodes |
+
+  `agent` is the base ego. `conditions` maps names to overrides of it (nested
+  dicts merge one level), e.g. `tom: {tom: true}`. `custom_personas` defines
+  new partner types from any `Traits` fields. Command-line overrides:
+  `--conditions`, `--personas`, `--run-seeds`, `--days`, `--episodes-per-day`,
+  `--horizon`.
 - **Paired orders.** The orders for (run seed, day, episode) are the same for
-  every persona, so partners are compared on identical order sequences.
+  every persona and condition.
+- **Reference ego.** `reference_agent` (default: the scripted no-memory player)
+  plays every (persona, run seed) on the same episodes, under the condition
+  `_reference`. The table's `vs_reference` is the mean of (score − reference
+  score) over identical episodes. This removes how hard a day's orders were, so
+  a change in `vs_reference` across days means the ego changed, not the orders.
+  `reference_agent: null` turns it off.
 - **Ego agents** implement `coop.agents.Agent`: `begin_episode`, `act`,
-  `end_episode(result)`, `end_day`, and `get_memory`/`set_memory`. Memory must
-  be a JSON-serialisable dict and is the only thing kept between episodes.
-  `result` holds what happened in the kitchen (orders, deliveries, score),
-  never the partner's persona, traits or true jobs. The built-in
-  `scripted` ego (a simulated human, no memory) is the no-learning reference:
-  its day-to-day changes come only from the orders.
+  `observe` (reward and public events after each step), `end_episode(result)`,
+  `end_day`, and `get_memory`/`set_memory`. Memory must be a JSON-serialisable
+  dict and is the only thing kept between episodes. `result` holds what
+  happened in the kitchen (orders, deliveries, score), never the partner's
+  persona, traits or true jobs.
 - **Resume.** Rerun the same command with the same `--out` and finished episodes
   are loaded, not replayed. A different config in the same `--out` is refused.
-- **Parallel runs:** `--workers N` runs N runs in separate processes.
+- **Parallel runs:** `--workers N` runs N runs in separate processes. With the
+  LLM ego, match it to vLLM's `MAX_NUM_SEQS`.
 
-Output: `OUT/results.json` (every episode, plus a persona × day table), and per
-episode `OUT/runs/<persona>/seed<k>/dayDD/epEE/`:
+Output: `OUT/results.json` (every episode, plus a condition × persona × day
+table), and per episode `OUT/runs/<condition>/<persona>/seed<k>/dayDD/epEE/`:
 
 | file | contents |
 |---|---|
-| `summary.json` | orders, deliveries, score |
+| `summary.json` | orders, deliveries, score; probe score and LLM usage for the LLM ego |
 | `steps.jsonl` | per step: actions, completed actions, positions, held items, deliveries, rejected actions |
-| `partner_truth.json` | partner persona, traits, true job per step, slips, abandoned jobs (evaluation only) |
-| `agent_log.json` | ego-side record |
+| `partner_truth.json` | partner persona, traits, true profile, true job per step, slips, abandoned jobs (evaluation only) |
+| `agent_log.json` | ego-side record (LLM ego: system prompt, every call, decisions, probe answer) |
 | `memory_after.json` | ego memory after the episode (after the day, for its last episode) |
 
-Size: about 0.23 MB per 400-step episode. The default config (270 episodes)
-writes about 63 MB and takes a few seconds with the scripted ego.
+## LLM ego (`coop.llm_agent.LLMAgent`)
+
+The agent the research is about. Its partner is the simulated human. Both have
+the same abilities and there are no messages.
+
+- **What it sees** (every decision): the map with what each player can reach,
+  the recipes of the menu, the open order, utensils, counters, both players'
+  positions and held items, the partner's completed actions with time steps,
+  deliveries and discarded batches, its own recent actions and their results,
+  and a `VALID_ACTIONS` list of actions that can start now. It never sees the
+  partner's persona, traits or true jobs, or the partner's planned actions. A
+  test scans every prompt for them.
+- **Actions** use Collab-Overcooked's names, with no role split:
+  `pickup(item, place)`, `put_obj_in_utensil(u)`, `cut/cook/bake/stir(u)`,
+  `fill_dish_with_food(u)`, `deliver_soup()`, `place_obj_on_counter()`,
+  `wait(n)`. An executor (`coop.executor`) walks to the station and interacts.
+  The LLM is asked again when the action finishes or fails (with the reason),
+  or when a `wait` ends. A `wait` ends early when the partner completes an
+  action. An impossible action gets one retry with the reason. After that the
+  agent waits one step (counted as a fallback).
+- **Conditions** (agent keys):
+
+  | key | effect |
+  |---|---|
+  | `tom` | before each action, writes what the partner is doing and tends to do (`"partner"` field). Only the reply format differs from `tom: false`. |
+  | `memory` | after each episode, reflects on the partner. The profile and notes (last `max_memory_notes`) appear in every later episode's system prompt. |
+  | `probe` | after each episode, rates the partner on four traits: `prefers` (prep/cook/serve/no clear preference), `speed` (normal/slow), `reliability` (reliable/makes mistakes), `commitment` (finishes/abandons tasks). Scored against the persona's true profile (`coop.profile`). Without `memory`, the answer is logged but never shown to the agent again. |
+
+- **Backends** (`coop.llm`, from ICRL4AHT): `openai_compat` (vLLM or a hosted
+  API; `*_env` keys read URL, model, key and `chat_template_kwargs` from
+  environment variables) and `mock` (offline: picks from `VALID_ACTIONS`).
+  `coop.check` verifies that thinking is off for a served model.
+- **Probe caveat on `new_env`:** the ego is on the right, so the partner works on
+  the left, which has the dispenser, chopping board, blender and dishes. The
+  true `prefers` label comes from the persona's traits, but a `steady` partner
+  still does mostly prep there. So `prefers` answers are hard to get right on
+  this map: compare the four fields separately (`probe_field_accuracy` in
+  `results.json`). Maps where both players can do every stage will fix this.
 
 ## Run on the lab server
 
@@ -176,12 +227,32 @@ lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python 
 ```bash
 lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.days configs/coop/days_default.yaml --out outputs/days_default --workers 4
 ```
+```bash
+lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.days configs/coop/days_llm_mock.yaml --out outputs/days_llm_mock --workers 4
+```
+
+LLM ego with Qwen3.8-27B (1 GPU). `scripts/run_qwen38_days.sh` serves the
+model with vLLM inside the job, checks that thinking is off, runs `coop.days`,
+and stops the server. It uses the same variables as ICRL4AHT's
+`run_qwen38_coop.sh` (`LLM_MODEL_PATH`, `LLM_SERVE_ENV`, `MAX_NUM_SEQS`,
+`GPU_MEM`, ...; with `ICRL_LLM_BASE_URL` set, it uses that server instead).
+
+Small first run (one condition, one persona, 2 days × 1 short episode):
+
+```bash
+lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_smoke --conditions tom_memory --personas slow --run-seeds 0 --days 2 --episodes-per-day 1 --horizon 150
+```
+
+Full design:
+
+```bash
+lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm --workers 16
+```
 
 ## Not built yet
 
-One shared prompt and action list for both agents, no messages (and no view of
-the teammate's plan), the partner-observation layer, and the LLM agent with
-memory across days.
+Partial observability (view radius), the order-display tile, maps where both
+players can reach every station, and an LLM-simulated human partner.
 
 ## Other environment changes
 

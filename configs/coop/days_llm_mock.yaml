@@ -1,0 +1,21 @@
+# Offline check of the LLM-agent pipeline (mock backend: no model, no network).
+# Same conditions as days_llm.yaml; scores are meaningless.
+name: days_llm_mock
+layout: new_env
+menu: [boiled_egg, boiled_mushroom, baked_carrot_soup]
+horizon: 120
+days: 2
+episodes_per_day: 2
+ego_index: 0
+personas: [steady, slow]
+run_seeds: [0]
+agent:
+  type: llm
+  backend: {type: mock}
+  probe: true
+conditions:
+  direct: {tom: false, memory: false}
+  tom: {tom: true, memory: false}
+  memory: {tom: false, memory: true}
+  tom_memory: {tom: true, memory: true}
+reference_agent: {type: scripted, persona: steady}

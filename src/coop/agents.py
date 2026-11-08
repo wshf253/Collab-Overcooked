@@ -6,7 +6,7 @@ The runner (``coop.days``) calls, in order:
     for each day:
         for each episode of the day:
             begin_episode(mdp, index, context)
-            act(state, t) ...          # every step
+            act(state, t) ...          # every step, then observe(t, reward, info)
             end_episode(result)        # what the agent may learn from this episode
             get_memory()               # saved after every episode
         end_day(day, results)
@@ -41,6 +41,9 @@ class Agent:
 
     def act(self, state, t: int) -> Tuple[Any, Any]:
         raise NotImplementedError
+
+    def observe(self, t: int, reward: float, info: Dict[str, Any]) -> None:
+        """After each step: the reward and public events (deliveries, rejected actions)."""
 
     def end_episode(self, result: Dict[str, Any]) -> None:
         pass
