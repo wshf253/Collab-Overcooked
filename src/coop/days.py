@@ -315,7 +315,27 @@ def _metrics(summary: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------- #
 # All runs of a config
 # ---------------------------------------------------------------------- #
-def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print) -> Dict[str, Any]:
+# Files whose changes alter how episodes are played (analysis/screening code is left out).
+CODE_FILES = ["src/coop/" + f for f in ("agents.py", "days.py", "env.py", "executor.py", "kitchen.py",
+                                        "llm.py", "llm_agent.py", "nav.py", "orders.py", "partner.py",
+                                        "profile.py")] + ["lib/overcooked_ai/overcooked_ai_py/mdp/overcooked_mdp.py"]
+REPO = Path(__file__).resolve().parents[2]
+
+
+def code_version(layout: str) -> str:
+    """Hash of the code and layout that play episodes, to stop a resume from mixing versions."""
+    h = hashlib.sha256()
+    files = CODE_FILES + [f"lib/overcooked_ai/overcooked_ai_py/data/layouts/{layout}.layout"]
+    for rel in files:
+        h.update(rel.encode())
+        h.update((REPO / rel).read_bytes())
+    for f in sorted((REPO / "src" / "prompts" / "recipe").glob("*.txt")):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
+def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print,
+            allow_code_change: bool = False) -> Dict[str, Any]:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     cfg_dict = asdict(cfg)
@@ -326,6 +346,22 @@ def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print)
             raise ValueError(f"{cfg_path} holds a different config; use a new --out to start over")
     else:
         cfg_path.write_text(json.dumps(cfg_dict, indent=1))
+    version = code_version(cfg.layout)
+    ver_path = out / "code_version.json"
+    if ver_path.exists():
+        recorded = json.loads(ver_path.read_text())
+        if recorded.get("hash") != version and not allow_code_change:
+            raise ValueError(
+                f"The code that plays episodes changed since {out} was started ({recorded.get('hash')} -> "
+                f"{version}); finishing it would mix two versions. Use a new --out, or pass "
+                "--allow-code-change if the change cannot affect results.")
+        if recorded.get("hash") != version:
+            log(f"warning: code changed ({recorded.get('hash')} -> {version}); continuing as asked")
+            recorded.setdefault("history", []).append(version)
+            recorded["hash"] = version
+            ver_path.write_text(json.dumps(recorded, indent=1))
+    else:
+        ver_path.write_text(json.dumps({"hash": version, "files": CODE_FILES}, indent=1))
     conditions = list(cfg.conditions) + ([REFERENCE] if cfg.reference_agent is not None else [])
     for c in conditions:      # fail before any run when a backend is misconfigured (e.g. no server URL)
         spec = cfg.condition_agent(c)
@@ -435,12 +471,15 @@ def main(argv=None):
     ap.add_argument("--days", type=int)
     ap.add_argument("--episodes-per-day", type=int)
     ap.add_argument("--horizon", type=int)
-    ap.add_argument("--layout", help="layout file name, e.g. new_env (split) or open_env (open kitchen)")
+    ap.add_argument("--layout", help="layout file name: new_env (split), open_env, open2_env (open kitchens)")
+    ap.add_argument("--allow-code-change", action="store_true",
+                    help="resume even though the episode-playing code changed since the run started")
     args = ap.parse_args(argv)
     cfg = load_config(args.config, conditions=args.conditions, personas=args.personas,
                       run_seeds=args.run_seeds, days=args.days, episodes_per_day=args.episodes_per_day,
                       horizon=args.horizon, layout=args.layout)
-    results = run_all(cfg, args.out, args.workers, log=lambda s: print(s, file=sys.stderr, flush=True))
+    results = run_all(cfg, args.out, args.workers, log=lambda s: print(s, file=sys.stderr, flush=True),
+                      allow_code_change=args.allow_code_change)
     failed = [r for r in results["runs"] if r["status"] != "ok"]
     print(format_table(cfg, results["table"]))
     print(f"wrote {Path(args.out) / 'results.json'}")

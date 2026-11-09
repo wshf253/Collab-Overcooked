@@ -6,6 +6,12 @@
 #
 # Everything after the config is passed to `python -m coop.days`.
 # With ICRL_LLM_BASE_URL already set, no server is started and that endpoint is used.
+#
+# Several maps against ONE server (one GPU holds one 27B model, not three):
+#   LAYOUTS="new_env:outputs/days_llm_v2 open_env:outputs/days_llm_open open2_env:outputs/days_llm_open2" \
+#     bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --workers 16
+# Each entry is layout:out_dir (or just a layout, then --out PREFIX gives PREFIX_<layout>).
+# The maps run in parallel, each a separate coop.days process; MAX_NUM_SEQS is shared.
 # Adapted from ICRL4AHT scripts/run_qwen38_coop.sh (same variables and defaults).
 set -euo pipefail
 
@@ -74,4 +80,44 @@ cat "$LOG_DIR/thinking_check.jsonl"
 export COOP_CHAT_TEMPLATE_KWARGS="${COOP_CHAT_TEMPLATE_KWARGS:-$PICKED}"
 echo "chat_template_kwargs: $COOP_CHAT_TEMPLATE_KWARGS"
 
-"$PY" -m coop.days "$CONFIG" "$@" 2>&1 | tee "$LOG_DIR/run.log"
+if [[ -z "${LAYOUTS:-}" ]]; then
+    "$PY" -m coop.days "$CONFIG" "$@" 2>&1 | tee "$LOG_DIR/run.log"
+    exit "${PIPESTATUS[0]}"
+fi
+
+OUT_PREFIX=''
+REST=()
+while (($#)); do
+    case "$1" in
+        --out) OUT_PREFIX="$2"; shift 2 ;;
+        --out=*) OUT_PREFIX="${1#--out=}"; shift ;;
+        *) REST+=("$1"); shift ;;
+    esac
+done
+PIDS=()
+NAMES=()
+for ENTRY in $LAYOUTS; do
+    LAYOUT="${ENTRY%%:*}"
+    if [[ "$ENTRY" == *:* ]]; then
+        OUT="${ENTRY#*:}"
+    else
+        [[ -n "$OUT_PREFIX" ]] || { echo "LAYOUTS entry '$ENTRY' has no out dir and no --out prefix was given" >&2; exit 1; }
+        OUT="${OUT_PREFIX}_${LAYOUT}"
+    fi
+    echo "Starting $LAYOUT -> $OUT (log: $LOG_DIR/run_$LAYOUT.log)"
+    "$PY" -m coop.days "$CONFIG" --layout "$LAYOUT" --out "$OUT" ${REST[@]+"${REST[@]}"} \
+        > "$LOG_DIR/run_$LAYOUT.log" 2>&1 &
+    PIDS+=("$!")
+    NAMES+=("$LAYOUT")
+done
+STATUS=0
+for i in "${!PIDS[@]}"; do
+    if wait "${PIDS[$i]}"; then
+        echo "== ${NAMES[$i]}: finished"
+    else
+        echo "== ${NAMES[$i]}: FAILED (see $LOG_DIR/run_${NAMES[$i]}.log)"
+        STATUS=1
+    fi
+    tail -n 30 "$LOG_DIR/run_${NAMES[$i]}.log"
+done
+exit "$STATUS"

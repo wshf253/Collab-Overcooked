@@ -106,6 +106,8 @@ def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
                             for u in mine):
             missed_ready += 1
     first = [d["attempts"][0] for d in decisions if d.get("attempts")]
+    all_calls = log.get("calls") or []
+    latency = [c.get("latency_s") for c in all_calls if c.get("latency_s") is not None]
     reasons, bad_actions, fallback_actions = Counter(), Counter(), Counter()
     for d in decisions:
         for a in d.get("attempts") or []:
@@ -115,6 +117,10 @@ def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
         if d.get("attempts") and all(a.get("error") for a in d["attempts"]):
             fallback_actions[" -> ".join(_action_kind(a.get("action")) for a in d["attempts"])] += 1
     return {"decisions": len(decisions),
+            "llm_seconds": sum(latency),
+            "latency_per_call": statistics.fmean(latency) if latency else None,
+            "prompt_tokens_per_call": statistics.fmean(c.get("prompt_tokens") or 0 for c in all_calls) if all_calls else None,
+            "completion_tokens_per_call": statistics.fmean(c.get("completion_tokens") or 0 for c in all_calls) if all_calls else None,
             "invalid_reasons": reasons, "invalid_actions": bad_actions, "fallback_pairs": fallback_actions, "wait_share": len(waits) / len(chosen) if chosen else None,
             "mean_wait_chosen": statistics.fmean(lengths) if lengths else None,
             "waits_full": full, "waits_ended_by_partner": early,
@@ -170,6 +176,10 @@ def analyse(out: Path) -> Dict[str, Any]:
                 "waits_full_per_episode": _mean_se([d["waits_full"] for d in ds])["mean"],
                 "waits_ended_by_partner_per_episode": _mean_se([d["waits_ended_by_partner"] for d in ds])["mean"],
                 "full_waits_with_ready_food_per_episode": _mean_se([d["full_waits_with_ready_food"] for d in ds])["mean"],
+                "llm_minutes_per_episode": (_mean_se([d["llm_seconds"] for d in ds])["mean"] or 0) / 60,
+                "latency_per_call": _mean_se([d["latency_per_call"] for d in ds])["mean"],
+                "prompt_tokens_per_call": _mean_se([d["prompt_tokens_per_call"] for d in ds])["mean"],
+                "completion_tokens_per_call": _mean_se([d["completion_tokens_per_call"] for d in ds])["mean"],
                 "action_mix": dict(sum((d["action_mix"] for d in ds), Counter())),
                 "invalid_reasons": dict(sum((d["invalid_reasons"] for d in ds), Counter()).most_common()),
                 "invalid_actions": dict(sum((d["invalid_actions"] for d in ds), Counter()).most_common()),
@@ -290,6 +300,15 @@ def format_report(rep: Dict[str, Any]) -> str:
         lines.append("  invalid actions: " + ", ".join(f"{k} {v / total:.0%}" for k, v in actions.most_common(6)))
         if pairs:
             lines.append("  fallbacks (first -> retry): " + ", ".join(f"{k} x{v}" for k, v in pairs.most_common(4)))
+    lines.append("\n== time spent in the model (per episode; calls run one after another within a run) ==")
+    lines.append(f"  {'condition/persona':<24}{'calls':>7}{'s/call':>8}{'LLM min':>9}{'prompt tok':>11}{'reply tok':>10}")
+    for cond, rows in rep["conditions"].items():
+        for persona, r in rows.items():
+            def n(x, f):
+                return f.format(x) if x is not None else "-"
+            lines.append(f"  {cond + '/' + persona:<24}{n(r['llm_calls_per_episode'], '{:.0f}'):>7}"
+                         f"{n(r['latency_per_call'], '{:.2f}'):>8}{n(r['llm_minutes_per_episode'], '{:.1f}'):>9}"
+                         f"{n(r['prompt_tokens_per_call'], '{:.0f}'):>11}{n(r['completion_tokens_per_call'], '{:.0f}'):>10}")
     health = [(c, p, r) for c, rows in rep["conditions"].items() for p, r in rows.items()
               if r["thinking"] or r["truncated"] or r["errors"]]
     lines.append("\n== LLM health ==")

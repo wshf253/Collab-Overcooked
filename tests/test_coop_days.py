@@ -186,6 +186,22 @@ class RunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_cfg(small_config(personas=["steady"], horizon=61))
 
+    def test_resume_refuses_changed_code(self):
+        import coop.days as days
+        cfg = small_config(personas=["steady"], days=1, episodes_per_day=1)
+        self.run_cfg(cfg)
+        real = days.code_version
+        try:
+            days.code_version = lambda layout: "something-else"
+            with self.assertRaises(ValueError):
+                self.run_cfg(cfg)
+            res = run_all(cfg, self.tmp / "out", log=silent, allow_code_change=True)
+            self.assertEqual(res["runs"][0]["episodes_resumed"], 1)
+            rec = json.loads((self.tmp / "out" / "code_version.json").read_text())
+            self.assertEqual(rec["hash"], "something-else")
+        finally:
+            days.code_version = real
+
     def test_failed_run_is_reported(self):
         res = self.run_cfg(small_config(personas=["steady"], agent={"type": "broken"}))
         self.assertEqual(res["runs"][0]["status"], "error")

@@ -302,9 +302,38 @@ Small first run (one condition, one persona, 2 days × 1 short episode):
 lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_smoke --conditions tom_memory --personas slow --run-seeds 0 --days 2 --episodes-per-day 1 --horizon 150
 ```
 
-The three full designs below can run at the same time, one GPU each. When more than one GPU job runs at once, start each with `lab-run --new --spare --gpus 1`.
+**Why a run takes long.** The agent asks the model whenever its action ends.
+It mostly chooses `wait(1)`, so that is nearly every step: about 200–330 calls per
+300-step episode, plus retries after invalid replies. A run's 10 episodes are
+played one after another (memory carries over), and within an episode each call
+waits for the previous one. A run therefore takes about (calls per episode ×
+seconds per call × 10). `coop.analyze` prints both numbers ("time spent in the
+model"). Running more runs in parallel shortens the whole config, but not one run.
 
-Speed: one LLM call is made almost every step, so a run is limited by how many requests vLLM handles at once. Each config has 48 LLM runs (4 conditions × 6 personas × 2 run seeds), so `--workers 48` with `MAX_NUM_SEQS=48` plays them all at once. The worker processes mostly wait for the model, so 24 CPUs are enough. With the spare pool's 84 CPUs and 341 GB, three jobs fit at `--cpus 24 --mem 110G` each (3 × 120G would be 360 GB). Stopping a job and restarting it with the same `--out` keeps every finished episode; `--workers` and `MAX_NUM_SEQS` are not part of the config.
+**GPUs.** Qwen3.8-27B in bf16 needs about 54 GB, so one RTX PRO 6000 (96 GB) holds
+one server with about 30 GB left for request memory, not three. Either run each
+map as its own job on its own GPU (`--spare`, three GPUs), or run all three maps
+against one server on one GPU:
+
+```bash
+lab-run --new --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 LAYOUTS="new_env:outputs/days_llm_v2 open_env:outputs/days_llm_open open2_env:outputs/days_llm_open2" bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --workers 16
+```
+
+With `LAYOUTS`, the script starts one server and runs each `layout:out_dir` as its
+own `coop.days` process (logs `run_<layout>.log` next to `vllm.log`). The
+`--workers` value applies to each map, so 3 × 16 = 48 requests share `MAX_NUM_SEQS=48`.
+
+Three jobs on three GPUs at the same time (`--spare`). With the spare pool's 84
+CPUs and 341 GB, three jobs fit at `--cpus 24 --mem 110G` each (3 × 120G would be
+360 GB). Each config has 48 LLM runs (4 conditions × 6 personas × 2 run seeds), so
+`--workers 48` with `MAX_NUM_SEQS=48` plays them all at once.
+
+**Resuming.** Stopping a job and restarting it with the same `--out` keeps every
+finished episode (`--workers`, `MAX_NUM_SEQS` and `LAYOUTS` are not part of the
+config). If the code that plays episodes changed since the folder was started,
+`coop.days` refuses to continue (`code_version.json`), so one result folder never
+mixes two agent versions. Use a new `--out`, or `--allow-code-change` when the
+change cannot affect results.
 
 Full design, split map (`new_env`):
 
