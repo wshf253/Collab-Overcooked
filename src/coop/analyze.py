@@ -6,7 +6,10 @@ Reports, per condition and persona:
 
 * score minus the reference ego on identical episodes (mean ± standard error),
   first day vs last day, and each condition minus ``direct`` on identical episodes;
-* the partner probe: accuracy per field and the most common answer;
+* paired differences with standard errors over runs (episodes of one run share
+  memory, so the run is the unit), including vs ``tom_memory`` for the controls;
+* the partner probe: accuracy per field and the most common answer, and the error
+  of the estimated stage shares against the partner's real ones;
 * how the ego spent its decisions: share of ``wait``, chosen wait length, how
   waits ended (full length / early because the partner acted), and **waits that
   ran their full length while finished food sat in a utensil the ego can reach**
@@ -82,6 +85,23 @@ def _action_kind(action: Any) -> str:
     if name == "wait":
         return f"wait({args[0][:8]})"
     return f"{name}({re.sub(r'[0-9]+$', '', args[0]) if args and args[0] else ''})"
+
+
+COMPARE_TO = ("direct", "tom_memory")
+
+
+def _paired_runs(eps: List[Dict[str, Any]], other_score) -> Dict[str, Optional[float]]:
+    """Mean ± SE over runs (persona x run seed) of each run's mean paired difference.
+
+    Episodes of one run share the agent's memory, so they are not independent; a run
+    is the unit here. This SE is the one to quote.
+    """
+    per_run: Dict[tuple, List[float]] = defaultdict(list)
+    for e in eps:
+        o = other_score(e)
+        if o is not None:
+            per_run[(e["persona"], e["seed"])].append(e["summary"]["score"] - o)
+    return _mean_se([statistics.fmean(v) for v in per_run.values()])
 
 
 def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
@@ -162,6 +182,9 @@ def analyse(out: Path) -> Dict[str, Any]:
                     answers = Counter(str(p["answer"].get(f)) for p in probes)
                     probe[f] = {"accuracy": statistics.fmean(float(p["correct"][f]) for p in probes),
                                 "truth": probes[0]["truth"][f], "answers": dict(answers.most_common())}
+                errs = [p["share_error"] for p in probes if p.get("share_error") is not None]
+                if errs:
+                    probe["share_error"] = statistics.fmean(errs)
             ds = [decision_stats(e["log"]) for e in mine]
             usage = [e["log"].get("usage") or {} for e in mine]
             report["conditions"][cond][persona] = {
@@ -197,9 +220,14 @@ def analyse(out: Path) -> Dict[str, Any]:
         report["overall"][cond] = {
             "vs_reference_by_day": {str(d): _mean_se([e["summary"]["score"] - ref[k(e)] for e in allc
                                                       if e["day"] == d and k(e) in ref]) for d in days},
-            "vs_direct": _mean_se([e["summary"]["score"] - by_key[("direct",) + k(e)]["summary"]["score"]
-                                   for e in allc if ("direct",) + k(e) in by_key]) if cond != "direct" else None,
+            "vs_reference_runs": _paired_runs(allc, lambda e: ref.get(k(e))),
         }
+        for other in COMPARE_TO:
+            if other in conditions and other != cond:
+                get = lambda e, o=other: (by_key.get((o,) + k(e)) or {}).get("summary", {}).get("score")
+                report["overall"][cond][f"vs_{other}"] = _mean_se(
+                    [e["summary"]["score"] - get(e) for e in allc if get(e) is not None])
+                report["overall"][cond][f"vs_{other}_runs"] = _paired_runs(allc, get)
     report["dishes"] = dish_table(eps)
     return report
 
@@ -237,12 +265,18 @@ def _fmt(ms, signed=True):
 
 
 def format_report(rep: Dict[str, Any]) -> str:
+    width = max([12] + [len(c) + 1 for c in rep["overall"]])
     lines = ["== score minus reference on identical episodes (mean±SE over episodes) ==",
-             f"{'condition':<12}" + "".join(f"{'day ' + d:>14}" for d in next(iter(rep['overall'].values()))["vs_reference_by_day"])
+             f"{'condition':<{width}}" + "".join(f"{'day ' + d:>14}" for d in next(iter(rep['overall'].values()))["vs_reference_by_day"])
              + f"{'vs direct':>14}"]
     for cond, o in rep["overall"].items():
-        lines.append(f"{cond:<12}" + "".join(f"{_fmt(v):>14}" for v in o["vs_reference_by_day"].values())
-                     + f"{_fmt(o['vs_direct']):>14}")
+        lines.append(f"{cond:<{width}}" + "".join(f"{_fmt(v):>14}" for v in o["vs_reference_by_day"].values())
+                     + f"{_fmt(o.get('vs_direct')):>14}")
+    lines.append("\n== paired differences, mean±SE over runs (a run = persona x seed; quote these) ==")
+    lines.append(f"{'condition':<{width}}{'vs reference':>16}{'vs direct':>16}{'vs tom_memory':>16}")
+    for cond, o in rep["overall"].items():
+        lines.append(f"{cond:<{width}}{_fmt(o.get('vs_reference_runs')):>16}{_fmt(o.get('vs_direct_runs')):>16}"
+                     f"{_fmt(o.get('vs_tom_memory_runs')):>16}")
     lines.append("\n== per persona: vs reference (all days | first day -> last day), vs direct ==")
     for cond, rows in rep["conditions"].items():
         lines.append(f"{cond}")
@@ -259,6 +293,8 @@ def format_report(rep: Dict[str, Any]) -> str:
                 if p:
                     top = next(iter(p["answers"]))
                     cells.append(f"{f} {p['accuracy']:.2f} ('{top}'; truth '{p['truth']}')")
+            if r["probe"].get("share_error") is not None:
+                cells.append(f"stage-share error {r['probe']['share_error']:.0f} pts")
             lines.append(f"  {persona:<12} " + " | ".join(cells))
     lines.append("\n== how decisions were spent (per episode) ==")
     lines.append(f"  {'condition/persona':<24}{'wait%':>6}{'wait n':>7}{'full':>6}{'early':>6}"

@@ -168,6 +168,7 @@ class MockBackend(Backend):
         if "PARTNER_PROFILE_PROBE" in last:
             out = {"partner_profile": {"prefers": "no clear preference", "speed": "normal",
                                        "reliability": "reliable", "commitment": "finishes tasks"},
+                   "stage_shares": {"prep": 34, "cook": 33, "serve": 33},
                    "notes": "mock notes"}
         else:
             valid = [a for a in _grab_list(last, "VALID_ACTIONS:") if not a.startswith("wait")]

@@ -123,17 +123,53 @@ class DaysConfig:
                 raise ValueError(f"condition {name!r}: the agent needs a 'type'")
         if self.reference_agent is not None and "type" not in self.reference_agent:
             raise ValueError("reference_agent needs a 'type'")
+        for name in self.conditions:
+            src = self.memory_source(name)
+            if src is None:
+                continue
+            if src.get("type") not in ("swap", "placebo"):
+                raise ValueError(f"condition {name!r}: memory_source type must be 'swap' or 'placebo'")
+            origin = src.get("from")
+            if origin not in self.conditions or origin == name or self.memory_source(origin):
+                raise ValueError(f"condition {name!r}: memory_source.from must name another condition "
+                                 "of this config that has no memory_source itself")
+            if not self.condition_agent(origin).get("memory"):
+                raise ValueError(f"condition {name!r}: the source condition {origin!r} keeps no memory")
+            if not self.condition_agent(name).get("memory"):
+                raise ValueError(f"condition {name!r}: set memory: true so the given notes are shown")
+            if src["type"] == "swap":
+                donors = self.donors(name)
+                for p in self.personas:
+                    if donors.get(p) not in self.personas or donors[p] == p:
+                        raise ValueError(f"condition {name!r}: persona {p!r} needs a different donor "
+                                         f"persona from this config (got {donors.get(p)!r})")
 
     def condition_agent(self, name: str) -> Dict[str, Any]:
         if name == REFERENCE:
             return copy.deepcopy(self.reference_agent)
         spec = copy.deepcopy(self.agent)
         for key, value in (self.conditions[name] or {}).items():
+            if key == "memory_source":
+                continue
             if isinstance(value, dict) and isinstance(spec.get(key), dict):
                 spec[key] = {**spec[key], **value}
             else:
                 spec[key] = copy.deepcopy(value)
         return spec
+
+    def memory_source(self, name: str) -> Optional[Dict[str, Any]]:
+        """Control conditions: memory taken from another condition's runs, not from this run."""
+        if name == REFERENCE:
+            return None
+        return (self.conditions.get(name) or {}).get("memory_source")
+
+    def donors(self, name: str) -> Dict[str, str]:
+        """For a swap: whose memory each persona gets (default: the next persona in the list)."""
+        src = self.memory_source(name) or {}
+        if src.get("donors"):
+            return dict(src["donors"])
+        ps = self.personas
+        return {p: ps[(i + 1) % len(ps)] for i, p in enumerate(ps)}
 
 
 def persona_traits(name: str, custom: Dict[str, Dict[str, Any]]) -> Traits:
@@ -228,7 +264,9 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     agent_log = agent.episode_log()
     probe = agent_log.get("probe") if isinstance(agent_log, dict) else None
     if probe and probe.get("partner_profile"):
-        summary["probe"] = score_profile(probe["partner_profile"], truth_profile(traits))
+        summary["probe"] = score_profile(probe["partner_profile"], truth_profile(traits),
+                                         probe.get("stage_shares"),
+                                         partner.summary()["stage_share_when_acting"])
     if isinstance(agent_log, dict) and "usage" in agent_log:
         summary["llm_usage"] = dict(agent_log["usage"], invalid_actions=agent_log.get("invalid_actions"),
                                     fallbacks=agent_log.get("fallbacks"))
@@ -250,6 +288,60 @@ def run_dir_for(out: Path, condition: str, persona: str, run_seed: int) -> Path:
 
 def ep_dir_for(run_dir: Path, day: int, episode: int) -> Path:
     return run_dir / f"day{day:02d}" / f"ep{episode:02d}"
+
+
+PLACEBO_SENTENCES = (
+    "Orders are opened one at a time and the next one appears after a correct delivery.",
+    "Raw ingredients come from the ingredient dispenser and dishes from the dish dispenser.",
+    "A utensil has to be started after it is loaded, and it takes a few steps to finish.",
+    "Some dishes are served on a dish and others are served without one.",
+    "Each counter holds one item, and items can be left on counters.",
+    "A correct delivery gives 20 points and a wrong delivery costs points.",
+)
+
+
+def placebo_text(length: int) -> str:
+    """Neutral kitchen facts (all already in the rules) of about ``length`` characters."""
+    out, i = "", 0
+    while len(out) < length:
+        out = (out + " " if out else "") + PLACEBO_SENTENCES[i % len(PLACEBO_SENTENCES)]
+        i += 1
+    cut = out[:length]
+    return cut.rsplit(" ", 1)[0] if " " in cut and len(out) > length else cut
+
+
+def _previous(cfg: DaysConfig, day: int, ep: int) -> Optional[tuple]:
+    if ep > 1:
+        return day, ep - 1
+    if day > 1:
+        return day - 1, cfg.episodes_per_day
+    return None
+
+
+def given_memory(cfg: DaysConfig, out: Path, condition: str, persona: str, run_seed: int,
+                 day: int, ep: int) -> Dict[str, Any]:
+    """Memory a control condition starts episode (day, ep) with.
+
+    swap:    the notes the source condition had built with a different partner
+             (the donor persona) after the same number of episodes.
+    placebo: the notes the source condition had built with this partner, replaced by
+             neutral text of the same length, and with no profile.
+    """
+    src = cfg.memory_source(condition)
+    prev = _previous(cfg, day, ep)
+    if prev is None:
+        return {"notes": [], "memory_source": src["type"]}
+    donor = cfg.donors(condition)[persona] if src["type"] == "swap" else persona
+    path = ep_dir_for(run_dir_for(out, src["from"], donor, run_seed), *prev) / "memory_after.json"
+    if not path.exists():
+        raise FileNotFoundError(f"{condition}: needs {path} (run the source condition first)")
+    notes = json.loads(path.read_text()).get("notes") or []
+    if src["type"] == "placebo":
+        notes = [{"day": n["day"], "episode": n["episode"],
+                  "profile": {k: None for k in (n.get("profile") or {})},
+                  "notes": placebo_text(len(n.get("notes") or ""))} for n in notes]
+    return {"notes": copy.deepcopy(notes), "memory_source": src["type"],
+            "source": {"condition": src["from"], "persona": donor, "after": list(prev)}}
 
 
 def _done(ep_dir: Path) -> bool:
@@ -278,6 +370,10 @@ def run_one(cfg_dict: Dict[str, Any], out: str, condition: str, persona: str, ru
                 else:
                     if ep_dir.exists():
                         shutil.rmtree(ep_dir)        # partial episode from an interrupted run
+                    if cfg.memory_source(condition):
+                        # Control: the memory comes from another run, not from this run's own notes.
+                        given = given_memory(cfg, Path(out), condition, persona, run_seed, day, ep)
+                        agent.set_memory(dict(agent.get_memory(), **given))
                     sink = io.StringIO() if quiet else sys.stdout
                     with contextlib.redirect_stdout(sink):  # the legacy MDP prints every step
                         summary = play_episode(cfg, agent, persona, run_seed, day, ep, ep_dir)
@@ -367,19 +463,26 @@ def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print,
         spec = cfg.condition_agent(c)
         if spec.get("type") == "llm":
             build_backend(spec.get("backend") or {}, f"condition {c}")
-    jobs = [(c, p, s) for c in conditions for p in cfg.personas for s in cfg.run_seeds]
+    # Control conditions read memory from finished runs of their source condition: second phase.
+    phases = [[c for c in conditions if not cfg.memory_source(c)],
+              [c for c in conditions if cfg.memory_source(c)]]
+    total = len(conditions) * len(cfg.personas) * len(cfg.run_seeds)
     records = []
     started = time.time()
-    if workers <= 1:
-        for c, p, s in jobs:
-            records.append(run_one(cfg_dict, str(out), c, p, s))
-            log(_progress(records[-1], len(records), len(jobs), started))
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(run_one, cfg_dict, str(out), c, p, s) for c, p, s in jobs]
-            for f in as_completed(futures):
-                records.append(f.result())
-                log(_progress(records[-1], len(records), len(jobs), started))
+    for phase in phases:
+        jobs = [(c, p, s) for c in phase for p in cfg.personas for s in cfg.run_seeds]
+        if not jobs:
+            continue
+        if workers <= 1:
+            for c, p, s in jobs:
+                records.append(run_one(cfg_dict, str(out), c, p, s))
+                log(_progress(records[-1], len(records), total, started))
+        else:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(run_one, cfg_dict, str(out), c, p, s) for c, p, s in jobs]
+                for f in as_completed(futures):
+                    records.append(f.result())
+                    log(_progress(records[-1], len(records), total, started))
     records.sort(key=lambda r: (conditions.index(r["condition"]), cfg.personas.index(r["persona"]),
                                 r["run_seed"]))
     results = {"config": cfg_dict, "runs": records, "table": day_table(cfg, records)}

@@ -18,4 +18,6 @@ conditions:
   tom: {tom: true, memory: false}
   memory: {tom: false, memory: true}
   tom_memory: {tom: true, memory: true}
+  tom_memory_swap: {tom: true, memory: true, memory_source: {type: swap, from: tom_memory}}
+  tom_memory_placebo: {tom: true, memory: true, memory_source: {type: placebo, from: tom_memory}}
 reference_agent: {type: scripted, persona: steady}

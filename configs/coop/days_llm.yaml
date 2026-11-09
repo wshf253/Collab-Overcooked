@@ -1,4 +1,4 @@
-# LLM ego with a simulated human partner, four conditions:
+# LLM ego with a simulated human partner, four conditions plus two controls:
 #   direct      action only, no memory          (the LLM baseline)
 #   tom         writes what the partner is doing/tends to do before each action
 #   memory      reflects after each episode; notes about the partner carry over
@@ -37,4 +37,11 @@ conditions:
   tom: {tom: true, memory: false}
   memory: {tom: false, memory: true}
   tom_memory: {tom: true, memory: true}
+  # Controls for tom_memory (played after it, from its finished runs):
+  #   swap: before each episode, the notes tom_memory built with a DIFFERENT partner
+  #         (the next persona in the list) after the same number of episodes.
+  #   placebo: tom_memory's own notes for this partner, replaced by neutral kitchen facts
+  #         of the same length, with no profile.
+  tom_memory_swap: {tom: true, memory: true, memory_source: {type: swap, from: tom_memory}}
+  tom_memory_placebo: {tom: true, memory: true, memory_source: {type: placebo, from: tom_memory}}
 reference_agent: {type: scripted, persona: steady}

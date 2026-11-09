@@ -29,7 +29,7 @@ from .agents import Agent, register_agent
 from .executor import MAX_WAIT, Executor, parse_macro
 from .kitchen import Kitchen, held_text
 from .llm import Usage, build_backend, parse_json
-from .profile import PROFILE_FIELDS, clean_profile
+from .profile import PROFILE_FIELDS, PROFILE_GUIDE, clean_profile, clean_shares
 
 GRAMMAR = f"""\
 - pickup(<item>, ingredient_dispenser): take a raw ingredient (hands must be empty)
@@ -78,6 +78,9 @@ class LLMAgent(Agent):
         self.kitchen: Optional[Kitchen] = None      # built on the first act (needs the start state)
         self.executor: Optional[Executor] = None
         self.partner_log: List[Tuple[int, str]] = []
+        self.own_done = 0                                   # actions this agent completed
+        self.loaded_by: Dict[str, List[Tuple[str, str]]] = {}   # utensil -> [(who, item)] since emptied
+        self.prev_held: List[Optional[str]] = [None, None]
         self.own_log: List[Tuple[int, str, str]] = []      # (t, action, result)
         self.events: List[str] = []
         self.last_result = "this is the first decision of the episode"
@@ -146,13 +149,37 @@ class LLMAgent(Agent):
     # ------------------------------------------------------------------ #
     def _watch(self, state, t):
         k = self.kitchen
+        starters: Dict[str, str] = {}
         if t > 0:
-            done = state.ml_actions[k.other]
-            if done is not None:
-                self.partner_log.append((t - 1, done))
+            for i in (k.index, k.other):
+                done = state.ml_actions[i]
+                if done is None:
+                    continue
+                who = "you" if i == k.index else "your partner"
+                if i == k.other:
+                    self.partner_log.append((t - 1, done))
+                else:
+                    self.own_done += 1
+                m = re.fullmatch(r"(\w+)\((\w+)\)", done)
+                if m and m.group(1) == "put_obj_in_utensil":
+                    self.loaded_by.setdefault(m.group(2), []).append((who, self.prev_held[i] or "an item"))
+                elif m and m.group(2) in k.utensils:
+                    starters[m.group(2)] = who
         for msg in state.error_message or []:
-            note = re.sub(r"^TIMESTEP \d+:\s*", "", msg)
-            self.events.append(f"t={t - 1}: {note}")
+            m = re.search(r"items in (\w+) not matching", msg)
+            if m and m.group(1) in k.utensils:
+                u = m.group(1)
+                loads = self.loaded_by.get(u, [])
+                by = "; ".join(f"{who} put in {item}" for who, item in loads) or "unknown"
+                started = starters.get(u, "someone")
+                self.events.append(f"t={t - 1}: the items in {u} ({by}) matched no recipe and were thrown "
+                                   f"away when {started} started it")
+            else:
+                self.events.append(f"t={t - 1}: " + re.sub(r"^TIMESTEP \d+:\s*", "", msg))
+        for u in k.utensils:     # an emptied utensil starts a new batch
+            if k.utensil_status(state, u)[0] == "empty":
+                self.loaded_by.pop(u, None)
+        self.prev_held = [p.held_object.name if p.held_object else None for p in state.players]
 
     # ------------------------------------------------------------------ #
     # Prompts
@@ -184,7 +211,7 @@ class LLMAgent(Agent):
         if notes:
             lines = []
             for n in notes:
-                prof = ", ".join(f"{a}: {b}" for a, b in n["profile"].items() if b)
+                prof = ", ".join(f"{a}: {b}" for a, b in (n.get("profile") or {}).items() if b) or "not noted"
                 lines.append(f"- day {n['day']}, episode {n['episode']}: profile ({prof}); notes: {n['notes']}")
             parts.append("You have worked with this same partner before. What you noted after earlier "
                          "episodes:\n" + "\n".join(lines))
@@ -284,14 +311,17 @@ class LLMAgent(Agent):
             f"The episode is over (day {result['day']}, episode {result['episode']}). Team score "
             f"{result['score']:+g}, orders completed {result['orders_completed']}, wrong deliveries "
             f"{result['wrong_deliveries']}, {self.context['horizon']} steps.\n"
+            f"You completed {self.own_done} actions; your partner completed {len(self.partner_log)}.\n"
             f"Every action your partner completed (time step: action):\n{log}\n"
             f"Events:\n{events}\n\n"
             "Describe your partner from what you saw. Stages: prep = getting raw ingredients and "
             "using the chopping board or blender; cook = using the pot or oven and moving products "
-            "between utensils; serve = dishes, plating and delivering. Note that a player can only "
-            "do what their side of the kitchen allows.\n"
-            f'Reply with JSON only: {{"partner_profile": {{{options}}}, "notes": "<at most 80 words: '
-            'what to do differently with this partner next time>"}')
+            "between utensils; serve = dishes, plating and delivering. A player can only do what "
+            "their side of the kitchen allows.\n"
+            f"{PROFILE_GUIDE}\n"
+            f'Reply with JSON only: {{"partner_profile": {{{options}}}, "stage_shares": {{"prep": <percent>, '
+            '"cook": <percent>, "serve": <percent>}, "notes": "<at most 80 words: what to do differently '
+            'with this partner next time>"}')
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
         parsed, _ = self._chat("probe", self.context["horizon"], messages, self.probe_max_tokens)
         if not parsed:
@@ -299,6 +329,7 @@ class LLMAgent(Agent):
         notes = parsed.get("notes")
         return {"partner_profile": clean_profile(parsed.get("partner_profile")),
                 "raw_profile": parsed.get("partner_profile"),
+                "stage_shares": clean_shares(parsed.get("stage_shares")),
                 "notes": notes if isinstance(notes, str) else ""}
 
 

@@ -11,6 +11,21 @@ PROFILE_FIELDS = {
 }
 
 
+# Shown with the probe, identical in every condition: what each answer means.
+PROFILE_GUIDE = (
+    "What the answers mean:\n"
+    '- prefers: the stage your partner chose clearly more often than the orders required. Answer '
+    '"no clear preference" if they mostly did whatever was needed at the moment.\n'
+    '- speed: "slow" if your partner often stood still for several steps with nothing to do that you '
+    "could see, or completed clearly fewer actions than the work allowed.\n"
+    '- reliability: "makes mistakes" if items your partner put into utensils matched no recipe and '
+    "were thrown away.\n"
+    '- commitment: "abandons tasks" if your partner often put down what they were carrying where it was '
+    "not needed, or left a job half done and switched to something else.\n"
+    "- stage_shares: your estimate of how your partner's work split between prep, cook and serve "
+    "(percentages that add up to 100).")
+
+
 def truth_profile(traits) -> Dict[str, str]:
     """The answer a perfect observer should give for a partner with these traits."""
     return {
@@ -31,7 +46,35 @@ def clean_profile(raw: Any) -> Dict[str, Optional[str]]:
     return out
 
 
-def score_profile(answer: Dict[str, Optional[str]], truth: Dict[str, str]) -> Dict[str, Any]:
+def clean_shares(raw: Any) -> Optional[Dict[str, float]]:
+    """Stage shares as percentages summing to 100, or None if unusable."""
+    if not isinstance(raw, dict):
+        return None
+    vals = {}
+    for k in ("prep", "cook", "serve"):
+        try:
+            v = float(raw.get(k, 0))
+        except (TypeError, ValueError):
+            return None
+        if v < 0:
+            return None
+        vals[k] = v
+    total = sum(vals.values())
+    if total <= 0:
+        return None
+    return {k: 100.0 * v / total for k, v in vals.items()}
+
+
+def score_profile(answer: Dict[str, Optional[str]], truth: Dict[str, str],
+                  shares: Optional[Dict[str, float]] = None,
+                  true_shares: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """``true_shares``: fractions the partner actually spent on each stage this episode."""
     correct = {k: answer.get(k) == v for k, v in truth.items()}
-    return {"answer": answer, "truth": truth, "correct": correct,
-            "accuracy": sum(correct.values()) / len(correct)}
+    out = {"answer": answer, "truth": truth, "correct": correct,
+           "accuracy": sum(correct.values()) / len(correct)}
+    if shares is not None and true_shares:
+        truth_pct = {k: 100.0 * true_shares.get(k, 0.0) for k in ("prep", "cook", "serve")}
+        out["shares"] = shares
+        out["true_shares"] = truth_pct
+        out["share_error"] = sum(abs(shares[k] - truth_pct[k]) for k in truth_pct) / 3
+    return out

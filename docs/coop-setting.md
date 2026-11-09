@@ -216,6 +216,26 @@ the same abilities and there are no messages.
   | `memory` | after each episode, reflects on the partner. The profile and notes (last `max_memory_notes`) appear in every later episode's system prompt. |
   | `probe` | after each episode, rates the partner on four traits: `prefers` (prep/cook/serve/no clear preference), `speed` (normal/slow), `reliability` (reliable/makes mistakes), `commitment` (finishes/abandons tasks). Scored against the persona's true profile (`coop.profile`). Without `memory`, the answer is logged but never shown to the agent again. |
 
+- **Probe details.** The probe defines each answer the same way in every
+  condition (`coop.profile.PROFILE_GUIDE`). It tells the agent how many actions it
+  and its partner completed, and asks for `stage_shares` (the partner's prep /
+  cook / serve split in %), which are scored against the partner's real split
+  (`share_error`, percentage points). Events about a batch that matched no recipe
+  say who put each item in and who started the utensil, from the public action log.
+- **Memory controls** (conditions with `memory_source`, run after their source
+  condition, from its finished runs):
+
+  | control | memory shown before each episode |
+  |---|---|
+  | `swap` | the notes the source condition (e.g. `tom_memory`) built with a **different** partner after the same number of episodes. Donors default to the next persona in the list; set `donors: {persona: donor}` to choose. |
+  | `placebo` | the source condition's notes for **this** partner, with the same number and length of notes, but neutral kitchen facts instead of the text and no profile |
+
+  If `swap` does as well as `tom_memory`, the gain is a general habit rather
+  than knowledge of this partner. If `placebo` does as well, the notes' content
+  does not matter. The agent still reflects after each episode (for the probe),
+  but in a control its own notes are replaced before the next episode.
+  `coop.analyze` reports each condition against `tom_memory` on identical
+  episodes, with standard errors over runs.
 - **Backends** (`coop.llm`, from ICRL4AHT): `openai_compat` (vLLM or a hosted
   API; `*_env` keys read URL, model, key and `chat_template_kwargs` from
   environment variables) and `mock` (offline: picks from `VALID_ACTIONS`).
