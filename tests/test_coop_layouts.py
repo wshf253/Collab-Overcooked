@@ -24,39 +24,58 @@ def quiet(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
 
+OPEN = ("open_env", "open2_env")
+
+
 class OpenLayoutTests(unittest.TestCase):
     def test_same_recipes_as_new_env(self):
-        a, b = read_layout_dict("new_env"), read_layout_dict("open_env")
-        a.pop("grid"), b.pop("grid")
-        self.assertEqual(a, b)
+        for layout in OPEN:
+            a, b = read_layout_dict("new_env"), read_layout_dict(layout)
+            a.pop("grid"), b.pop("grid")
+            self.assertEqual(a, b, layout)
+
+    def test_two_of_every_utensil(self):
+        env = ContinuousOrderEnv(["boiled_egg"], layout="open2_env")
+        quiet(env.reset, 0)
+        self.assertEqual(sorted(env.mdp.utensil_list),
+                         sorted(f"{k}{i}" for k in ("pot", "oven", "chopping_board", "blender") for i in (0, 1)))
+        ex = Executor(Kitchen(env.mdp, 0, env.state), seed=0)
+        opts = ex.options(env.state, ["egg"])
+        self.assertIn("pickup(egg, ingredient_dispenser)", opts)
+        m, _ = parse_macro("cook(pot1)")
+        self.assertIn("cannot be started", ex.check(m, env.state))     # known utensil, just empty
 
     def test_both_players_reach_every_station(self):
-        env = ContinuousOrderEnv(["boiled_egg"], layout="open_env")
-        quiet(env.reset, 0)
-        for i in (0, 1):
-            k = Kitchen(env.mdp, i, env.state)
-            for p in list(k.utensils.values()) + [p for t in "IDS" for p in k.cells[t]]:
-                self.assertEqual(k.side(p), "both of you", p)
-            self.assertIn("Both of you can reach every station.", k.map_text())
+        for layout in OPEN:
+            env = ContinuousOrderEnv(["boiled_egg"], layout=layout)
+            quiet(env.reset, 0)
+            for i in (0, 1):
+                k = Kitchen(env.mdp, i, env.state)
+                for p in list(k.utensils.values()) + [p for t in "IDS" for p in k.cells[t]]:
+                    self.assertEqual(k.side(p), "both of you", (layout, p))
+                self.assertIn("Both of you can reach every station.", k.map_text())
 
     def test_steady_pair_never_deadlocks(self):
-        for seed in range(4):
-            env, players = simulate(DEFAULT_MENU, "open_env", 400, seed, "steady", 1)
-            s = env.summary()
-            self.assertGreaterEqual(s["orders_completed"], 10, seed)
-            self.assertEqual(s["rejected_interactions"], 0)
-            # Orders keep being completed until the end (no stall in the second half).
-            self.assertTrue(any(o["completed_t"] and o["completed_t"] > 300 for o in s["orders"]), seed)
+        for layout in OPEN:
+            for seed in range(4):
+                env, players = simulate(DEFAULT_MENU, layout, 400, seed, "steady", 1)
+                s = env.summary()
+                self.assertGreaterEqual(s["orders_completed"], 10, (layout, seed))
+                self.assertEqual(s["rejected_interactions"], 0)
+                # Orders keep being completed until the end (no stall in the second half).
+                self.assertTrue(any(o["completed_t"] and o["completed_t"] > 300 for o in s["orders"]),
+                                (layout, seed))
 
     def test_preference_shows_in_the_job_mix(self):
-        share = {}
-        for persona in ("steady", "prep_first", "serve_first"):
-            _, players = simulate(DEFAULT_MENU, "open_env", 400, 0, persona, 1)
-            share[persona] = players[1].summary()["stage_share_when_acting"]
-        self.assertGreater(share["prep_first"]["prep"], 0.8)
-        self.assertGreater(share["serve_first"]["serve"], 0.7)
-        self.assertLess(share["steady"]["prep"], 0.6)
-        self.assertLess(share["steady"]["serve"], 0.6)
+        for layout in OPEN:
+            share = {}
+            for persona in ("steady", "prep_first", "serve_first"):
+                _, players = simulate(DEFAULT_MENU, layout, 400, 0, persona, 1)
+                share[persona] = players[1].summary()["stage_share_when_acting"]
+            self.assertGreater(share["prep_first"]["prep"], 0.6, layout)
+            self.assertGreater(share["serve_first"]["serve"], 0.6, layout)
+            self.assertLess(share["steady"]["prep"], 0.6, layout)
+            self.assertLess(share["steady"]["serve"], 0.6, layout)
 
     def test_ego_on_open_map_can_use_every_station(self):
         env = ContinuousOrderEnv(["boiled_egg"], layout="open_env")

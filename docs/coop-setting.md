@@ -95,17 +95,18 @@ players can do every stage will separate the preference types better.
 |---|---|---|
 | `new_env` | Collab-Overcooked's original 5×5 kitchen, split by a column of counters. Left side: ingredient dispenser, chopping board, dish dispenser, blender. Right side: pot, oven, serving location. Items pass over the 3 shared counters. | Fixed roles: the right player cooks and serves, the left player supplies. |
 | `open_env` | 7×5 open kitchen with one of each station around the walls; both players can reach everything. | Roles are chosen, so who does which stage (preference) is visible. Players can also get in each other's way. |
+| `open2_env` | 9×5 open kitchen with two of every utensil (pot, oven, chopping board, blender), one ingredient dispenser, dish dispenser and serving location. | The same, but both players can work in parallel instead of waiting for a shared utensil. |
 
 ```
-new_env        open_env
-XXXPX          XXXPXXX
-I X1X          I     O
-C2X X          C 1 2 S
-D X O          D     B
-XBXSX          XXXXXXX
+new_env        open_env       open2_env
+XXXPX          XXXPXXX        XXPXXXPXX
+I X1X          I     O        I       O
+C2X X          C 1 2 S        C 1   2 S
+D X O          D     B        D       O
+XBXSX          XXXXXXX        XXBXCXBXX
 ```
 
-`open_env.layout` is `new_env.layout` with a different grid; a test keeps their
+The open layouts are `new_env.layout` with a different grid; a test keeps the
 recipes identical. Choose the layout in a config (`layout:`) or with
 `--layout` on `coop.days` and `coop.screen`.
 
@@ -119,6 +120,12 @@ Screen on `open_env` (8 seeds, partner vs `steady`): steady 295; `prep_first`
 does 92% prep, `serve_first` 83% serving (steady about 39% and 35%); `slow`
 is active 8% of the time (steady 66%); `sloppy` slips 1.5–3.5 times and
 `flaky` abandons 9–12.5 jobs per episode.
+
+On `open2_env`: steady 255 (longer walks, and with one open order at a time the
+second set of utensils helps only within an order); `prep_first` 67–70% prep,
+`serve_first` 66% serving, `slow` active 12–14%, `sloppy` 1.1–2.5 slips,
+`flaky` 9–11.5 abandoned jobs. Orders keep being completed to the end of every
+episode (no stalls).
 
 ## Days (`coop.days`)
 
@@ -307,16 +314,25 @@ Full design, open kitchen (`open_env`):
 lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open_env --out outputs/days_llm_open --workers 16
 ```
 
-Partner screen on the open kitchen:
+Full design, open kitchen with two of every utensil (`open2_env`):
+
+```bash
+lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open2_env --out outputs/days_llm_open2 --workers 16
+```
+
+Partner screens on the open kitchens:
 
 ```bash
 lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.screen --layout open_env --out outputs/coop_screen_open.json
 ```
+```bash
+lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.screen --layout open2_env --out outputs/coop_screen_open2.json
+```
 
 ## Not built yet
 
-Partial observability (view radius), the order-display tile, an open kitchen
-with two pots, and an LLM-simulated human partner.
+Partial observability (view radius), the order-display tile, and an
+LLM-simulated human partner.
 
 ## Other environment changes
 

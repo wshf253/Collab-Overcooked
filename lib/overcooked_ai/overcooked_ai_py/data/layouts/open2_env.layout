@@ -1,0 +1,171 @@
+{
+    "grid":  """XXPXXXPXX
+                I       O
+                C 1   2 S
+                D       O
+                XXBXCXBXX""",
+    "start_order_list": ["apple"],
+    "order_probability":{
+        "onion_soup": 1
+    },
+    "utensils": {
+        "pot": {"symbol": "P","operation":"cook"},
+        "chopping_board": {"symbol": "C","operation":"cut"},
+        "oven": {"symbol": "O","operation":"bake"},
+        "blender": {"symbol":"B","operation":"stir"},
+        "none":{"symbol":"N","operation":"none"}
+    },
+    "utensil_agent0":{
+        "pot":"cook",
+        "oven":"bake"
+    },
+    "utensil_agent1":{
+        "chopping_board":"cut",
+        "blender":"stir"
+    },
+    "cook_time": 3,
+    "num_items_for_soup": 3,
+    "delivery_reward": 20,
+    "rew_shaping_params": None,
+    "ingredients": ["apple","carrot","onion","potato","tofu","bell_pepper","sweet_potato","egg","mushroom","pumpkin","corn","green_bean","lentil","eggplant","chickpea","zucchini","beef","peanut","chicken","spinach","coconut","broccoli","bean","cauliflower","pea","romaine_lettuce","tomato","taro","green_pea"],
+    "recipes":{
+        "pot": {
+            "boiled_egg": {"recipe": ["egg"], "cook_time": 3},
+            "boiled_mushroom": {"recipe": ["mushroom"], "cook_time": 3},
+            "boiled_sweet_potato": {"recipe": ["sweet_potato"], "cook_time": 3},
+            "boiled_corn_slices":{"recipe":["corn_slices"],"cook_time":3},
+            "boiled_green_bean_slices":{"recipe":["green_bean_slices"],"cook_time":3},
+            "boiled_potato_slices":{"recipe":["potato_slices"],"cook_time":3},
+            "baked_bell_pepper_soup":{"recipe":["baked_bell_pepper_slices"],"cook_time":3},  
+            "baked_carrot_soup":{"recipe":["baked_carrot_slices"],"cook_time":3},  
+            "baked_mushroom_soup":{"recipe":["baked_mushroom_slices"],"cook_time":3},  
+            "baked_potato_soup":{"recipe":["baked_potato_slices"],"cook_time":3},  
+            "baked_pumpkin_soup":{"recipe":["baked_pumpkin_slices"],"cook_time":3}, 
+            "sliced_bell_pepper_and_corn_stew":{"recipe":["bell_pepper_slices","corn"],"cook_time":3}, 
+            "sliced_bell_pepper_and_lentil_stew":{"recipe":["bell_pepper_slices","lentil"],"cook_time":3},   
+            "sliced_eggplant_and_chickpea_stew":{"recipe":["eggplant_slices","chickpea"],"cook_time":3},  
+            "sliced_pumpkin_and_chickpea_stew":{"recipe":["pumpkin_slices","chickpea"],"cook_time":3}, 
+            "sliced_zucchini_and_chickpea_stew":{"recipe":["zucchini_slices","chickpea"],"cook_time":3},  
+            "sliced_beef_and_mashed_peanut_stew":{"recipe":["beef_slices","mashed_peanut"],"cook_time":3},  
+            "sliced_carrot_and_mashed_tofu_stew":{"recipe":["carrot_slices","mashed_tofu"],"cook_time":3},  
+            "sliced_chicken_and_mashed_spinach_stew":{"recipe":["chicken_slices","mashed_spinach"],"cook_time":3}, 
+            "sliced_eggplant_and_mashed_chickpea_stew":{"recipe":["eggplant_slices","mashed_chickpea"],"cook_time":3},  
+            "sliced_sweet_potato_and_mashed_coconut_stew":{"recipe":["sweet_potato_slices","mashed_coconut"],"cook_time":3}, 
+            "boiled_broccoli_slices":{"recipe":["broccoli_slices"],"cook_time":3},     
+            "boiled_carrot_slices":{"recipe":["carrot_slices"],"cook_time":3}, 
+            "boiled_cauliflower_slices":{"recipe":["cauliflower_slices"],"cook_time":3},   
+            "boiled_romaine_lettuce_slices":{"recipe":["romaine_lettuce_slices"],"cook_time":3},  
+            "boiled_sweet_potato_slices":{"recipe":["sweet_potato_slices"],"cook_time":3},    
+            "boiled_taro_slices":{"recipe":["taro_slices"],"cook_time":3},    
+            "boiled_zucchini_slices":{"recipe":["zucchini_slices"],"cook_time":3}   
+        },
+        "chopping_board": {
+            "potato_slices": {"recipe": ["potato"], "cook_time": 3},
+            "pumpkin_slices":{"recipe":["pumpkin"],"cook_time":3},
+            "corn_slices":{"recipe":["corn"],"cook_time":3},
+            "green_bean_slices":{"recipe":["green_bean"],"cook_time":3},
+            "potato_slices":{"recipe":["potato"],"cook_time":3},
+            "bell_pepper_slices":{"recipe":["bell_pepper"],"cook_time":3},  
+            "carrot_slices":{"recipe":["carrot"],"cook_time":3},  
+            "mushroom_slices":{"recipe":["mushroom"],"cook_time":3},  
+            "eggplant_slices":{"recipe":["eggplant"],"cook_time":3},  
+            "zucchini_slices":{"recipe":["zucchini"],"cook_time":3},  
+            "beef_slices":{"recipe":["beef"],"cook_time":3},  
+            "chicken_slices":{"recipe":["chicken"],"cook_time":3},  
+            "sweet_potato_slices":{"recipe":["sweet_potato"],"cook_time":3}, 
+            "broccoli_slices":{"recipe":["broccoli"],"cook_time":3},   
+            "cauliflower_slices":{"recipe":["cauliflower"],"cook_time":3},   
+            "tomato_slices":{"recipe":["tomato"],"cook_time":3},   
+            "romaine_lettuce_slices":{"recipe":["romaine_lettuce"],"cook_time":3}, 
+            "taro_slices":{"recipe":["taro"],"cook_time":3},
+            "onion_slices":{"recipe":["onion"],"cook_time":3}
+        },
+        "oven": {
+            "baked_bell_pepper":{"recipe":["bell_pepper"],"cook_time":3},  
+            "baked_sweet_potato":{"recipe":["sweet_potato"],"cook_time":3},  
+            "baked_potato_slices":{"recipe":["potato_slices"],"cook_time":3},  
+            "baked_pumpkin_slices":{"recipe":["pumpkin_slices"],"cook_time":3},   
+            "baked_bell_pepper_slices":{"recipe":["bell_pepper_slices"],"cook_time":3},  
+            "baked_carrot_slices":{"recipe":["carrot_slices"],"cook_time":3},  
+            "baked_mushroom_slices":{"recipe":["mushroom_slices"],"cook_time":3},  
+            "mashed_broccoli_and_bean_patty":{"recipe":["mashed_broccoli","bean"],"cook_time":3},
+            "mashed_carrot_and_chickpea_patty":{"recipe":["mashed_carrot","chickpea"],"cook_time":3},  
+            "mashed_cauliflower_and_lentil_patty":{"recipe":["mashed_cauliflower","lentil"],"cook_time":3}, 
+            "mashed_potato_and_pea_patty":{"recipe":["mashed_potato","pea"],"cook_time":3}, 
+            "mashed_sweet_potato_and_bean_patty":{"recipe":["mashed_sweet_potato","bean"],"cook_time":3}, 
+            "potato_carrot_and_onion_patty":{"recipe":["mashed_potato","onion_slices","carrot"],"cook_time":3}, 
+            "romaine_lettuce_pea_and_tomato_patty":{"recipe":["mashed_romaine_lettuce","pea","tomato_slices"],"cook_time":3}, 
+            "sweet_potato_spinach_and_mushroom_patty":{"recipe":["mashed_sweet_potato","spinach","mushroom_slices"],"cook_time":3}, 
+            "taro_bean_and_bell_pepper_patty":{"recipe":["mashed_taro","bean","bell_pepper_slices"],"cook_time":3}, 
+            "zucchini_green_pea_and_onion_patty":{"recipe":["mashed_zucchini","green_pea","onion_slices"],"cook_time":3}
+        },
+        "blender":{
+            "mashed_peanut":{"recipe":["peanut"],"cook_time":3},  
+            "mashed_tofu":{"recipe":["tofu"],"cook_time":3},  
+            "mashed_spinach":{"recipe":["spinach"],"cook_time":3}, 
+            "mashed_chickpea":{"recipe":["chickpea"],"cook_time":3},  
+            "mashed_coconut":{"recipe":["coconut"],"cook_time":3},  
+            "mashed_broccoli":{"recipe":["boiled_broccoli_slices"],"cook_time":3},  
+            "mashed_carrot":{"recipe":["boiled_carrot_slices"],"cook_time":3}, 
+            "mashed_cauliflower":{"recipe":["boiled_cauliflower_slices"],"cook_time":3},  
+            "mashed_potato":{"recipe":["boiled_potato_slices"],"cook_time":3},  
+            "mashed_sweet_potato":{"recipe":["boiled_sweet_potato_slices"],"cook_time":3},  
+            "mashed_potato_and_carrot_mixture":{"recipe":["boiled_potato_slices","carrot"],"cook_time":3},  
+            "mashed_romaine_lettuce":{"recipe":["boiled_romaine_lettuce_slices"],"cook_time":3}, 
+            "mashed_sweet_potato":{"recipe":["boiled_sweet_potato_slices"],"cook_time":3}, 
+            "mashed_taro":{"recipe":["boiled_taro_slices"],"cook_time":3}, 
+            "mashed_zucchini":{"recipe":["boiled_zucchini_slices"],"cook_time":3} 
+        },
+        "none":{
+            "apple":{"recipe":["apple"],"cook_time":0}
+        }
+    },
+    
+    "need_dish":{
+        "apple":0,
+        "carrot":0,
+        "onion":0,
+        "potato":0,
+        "tofu":0,
+        "baked_bell_pepper":0,
+        "baked_sweet_potato":0,
+        "boiled_egg":0,
+        "boiled_mushroom":0,
+        "boiled_sweet_potato":0,
+        "baked_potato_slices":0,
+        "baked_pumpkin_slices":0,
+        "boiled_corn_slices":0,
+        "boiled_green_bean_slices":0,
+        "boiled_potato_slices":0,
+        "baked_bell_pepper_soup":1,
+        "baked_carrot_soup":1,
+        "baked_mushroom_soup":1,
+        "baked_potato_soup":1,
+        "baked_pumpkin_soup":1,
+        
+        "sliced_bell_pepper_and_corn_stew":1,
+        "sliced_bell_pepper_and_lentil_stew":1,
+        "sliced_eggplant_and_chickpea_stew":1,
+        "sliced_pumpkin_and_chickpea_stew":1,
+        "sliced_zucchini_and_chickpea_stew":1,
+
+        "sliced_beef_and_mashed_peanut_stew":1,
+        "sliced_carrot_and_mashed_tofu_stew":1,
+        "sliced_chicken_and_mashed_spinach_stew":1,
+        "sliced_eggplant_and_mashed_chickpea_stew":1,
+        "sliced_sweet_potato_and_mashed_coconut_stew":1,
+
+        "mashed_broccoli_and_bean_patty":1,
+        "mashed_carrot_and_chickpea_patty":1,
+        "mashed_cauliflower_and_lentil_patty":1,
+        "mashed_potato_and_pea_patty":1,
+        "mashed_sweet_potato_and_bean_patty":1,
+
+        "potato_carrot_and_onion_patty":1,
+        "romaine_lettuce_pea_and_tomato_patty":1,
+        "sweet_potato_spinach_and_mushroom_patty":1,
+        "taro_bean_and_bell_pepper_patty":1,
+        "zucchini_green_pea_and_onion_patty":1
+    }
+    
+}
