@@ -184,6 +184,22 @@ the same abilities and there are no messages.
   this map: compare the four fields separately (`probe_field_accuracy` in
   `results.json`). Maps where both players can do every stage will fix this.
 
+## Analysis (`coop.analyze`)
+
+```bash
+PYTHONPATH=src:lib/overcooked_ai python -m coop.analyze outputs/days_llm --out outputs/days_llm/analysis.json
+```
+
+For an LLM run, prints:
+- score minus the reference by day and condition (mean ± SE over episodes),
+  each condition minus `direct` on identical episodes, and first day vs last
+  day per persona;
+- probe accuracy per field, with the most common answer and the truth;
+- how decisions were spent: wait share, chosen wait length, waits that ran
+  their full length vs ended by the partner, and full-length waits that ended
+  with finished food sitting in a utensil the ego can reach;
+- LLM health: calls, invalid replies, fallbacks, thinking/truncated replies.
+
 ## Run on the lab server
 
 First time only (assumes the repository lives in `~/work/collab-overcooked`):

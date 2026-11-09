@@ -206,6 +206,27 @@ class LLMAgentTests(unittest.TestCase):
             self.assertNotIn(head, self.ep("direct", day, ep, "agent_log.json")["system_prompt"])
         self.assertEqual(self.ep("direct", 2, 2, "memory_after.json")["notes"], [])
 
+    def test_analysis_report(self):
+        from coop.analyze import analyse, decision_stats, format_report
+        rep = analyse(self.tmp)
+        self.assertEqual(set(rep["conditions"]), {"direct", "tom", "memory"})
+        row = rep["conditions"]["tom"]["flaky"]
+        self.assertEqual(row["episodes"], 4)
+        self.assertEqual(row["probe"]["commitment"]["truth"], "abandons tasks")
+        self.assertIsNotNone(rep["overall"]["tom"]["vs_direct"]["mean"])
+        self.assertIn("partner probe", format_report(rep))
+        system = self.ep("tom", 1, 1, "agent_log.json")["system_prompt"]
+        fake = {"system_prompt": system, "decisions": [], "calls": [
+            {"kind": "decide", "user": "Utensils: pot0: boiled_egg is ready to take out; blender0: x is ready "
+             "to take out.\nResult of your last action: done: waited 10 step(s)"},
+            {"kind": "decide", "user": "Utensils: blender0: x is ready to take out.\n"
+             "Result of your last action: done: waited 10 step(s)"},
+            {"kind": "decide", "user": "Utensils: pot0: boiled_egg is ready to take out.\n"
+             "Result of your last action: done: waited 2 step(s); your partner just did y"}]}
+        st = decision_stats(fake)     # ego is slot 0: it reaches pot0 and oven0, not blender0
+        self.assertEqual((st["waits_full"], st["waits_ended_by_partner"], st["full_waits_with_ready_food"]),
+                         (2, 1, 1))
+
     def test_probe_is_scored_against_the_true_persona(self):
         probe = self.ep("direct", 1, 1, "summary.json")["probe"]
         self.assertEqual(probe["truth"], {"prefers": "no clear preference", "speed": "normal",
