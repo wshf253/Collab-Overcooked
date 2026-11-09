@@ -302,22 +302,24 @@ Small first run (one condition, one persona, 2 days × 1 short episode):
 lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_smoke --conditions tom_memory --personas slow --run-seeds 0 --days 2 --episodes-per-day 1 --horizon 150
 ```
 
+The three full designs below can run at the same time, one GPU each. When more than one GPU job runs at once, start each with `lab-run --new --spare --gpus 1`.
+
 Full design, split map (`new_env`):
 
 ```bash
-lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_v2 --workers 16
+lab-run --new --spare --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_v2 --workers 16
 ```
 
 Full design, open kitchen (`open_env`):
 
 ```bash
-lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open_env --out outputs/days_llm_open --workers 16
+lab-run --new --spare --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open_env --out outputs/days_llm_open --workers 16
 ```
 
 Full design, open kitchen with two of every utensil (`open2_env`):
 
 ```bash
-lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open2_env --out outputs/days_llm_open2 --workers 16
+lab-run --new --spare --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open2_env --out outputs/days_llm_open2 --workers 16
 ```
 
 Partner screens on the open kitchens:
