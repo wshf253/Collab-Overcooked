@@ -26,6 +26,9 @@ Traits (see :class:`Traits`) change how jobs are chosen and executed:
   job. A held item is put on the nearest free counter, and the job is not taken
   up again for ``abandon_cooldown`` steps.
 
+With no job (or while waiting for a preferred one) the partner steps off cells in
+front of a station, and after a blocked move it gives way at random (seeded).
+
 Every step is logged with the true job and status (``trace``), and slips and
 abandoned jobs are logged as events (``events``). This is ground truth for
 evaluation only and must never be shown to the agent being tested.
@@ -43,7 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from overcooked_ai_py.mdp.actions import Action
 
 from .env import START
-from .nav import Pos, floor_cells, reach, step_towards, touches
+from .nav import Pos, Unstick, access_cells, floor_cells, reach, step_aside, step_towards, touches
 
 STAGES = ("prep", "cook", "serve")
 UTENSIL_STAGE = {"chopping_board": "prep", "blender": "prep", "pot": "cook", "oven": "cook"}
@@ -120,9 +123,12 @@ class SimulatedHuman:
         self.mdp, self.index = mdp, index
         # A string seed is hashed with SHA-512 by `random`: reproducible across runs.
         self.rng = random.Random(f"{seed}:{index}:{self.name}")
+        # Separate stream for giving way, so slips and abandons do not depend on traffic.
+        self.unstick = Unstick(random.Random(f"{seed}:{index}:{self.name}:nav"))
         terrain = mdp.terrain_mtx
         self.terrain = terrain
         self.floor = floor_cells(terrain)
+        self.access = access_cells(terrain, self.floor)
         self.cells: Dict[str, List[Pos]] = {}
         for y, row in enumerate(terrain):
             for x, c in enumerate(row):
@@ -171,12 +177,15 @@ class SimulatedHuman:
         if self.job is None:
             job, why = self._choose(jobs, t)
             if job is None:
-                return self._log(t, why)
+                # Idle: step out from in front of a station so the other player can use it.
+                aside = step_aside(self.floor, self.access, tuple(self.me.position), tuple(self.other.position))
+                return self._log(t, why, aside)
             self.job, self.job_t, self.delay_left = job, t, self.traits.decision_delay
         if self.delay_left > 0:
             self.delay_left -= 1
             return self._log(t, "deciding")
         action, parm = self._execute(t)
+        action = self.unstick.filter(self.floor, tuple(self.me.position), action, tuple(self.other.position))
         return self._log(t, "act", action, parm)
 
     def summary(self) -> Dict[str, Any]:
@@ -192,6 +201,7 @@ class SimulatedHuman:
             "stage_share_when_acting": {k: v / (len(acting) or 1) for k, v in sorted(stages.items())},
             "slips": sum(e["type"] == "slip" for e in self.events),
             "abandons": sum(e["type"] == "abandon" for e in self.events),
+            "give_ways": self.unstick.give_ways,
         }
 
     # ------------------------------------------------------------------ #
@@ -300,12 +310,12 @@ class SimulatedHuman:
 
     def _dish_job(self, item: str, pos: Pos) -> List[Job]:
         """A dish for ``item`` at station ``pos`` (cooking or finished)."""
+        other_held = self.other.held_object
+        if other_held is not None and other_held.name == "dish":
+            return []       # the other player already has a dish for it
         if self._mine(pos):
             return [Job("plate", item, "serve", None, pos)] if self._dish_available() else []
         # I cannot reach the food: hand a dish over unless one is already on its way.
-        other_held = self.other.held_object
-        if other_held is not None and other_held.name == "dish":
-            return []
         if any(o.name == "dish" and self._theirs(p) for p, o in self.objects.items()):
             return []
         return [Job("supply_dish", "dish", "serve", None, pos)] if self._dish_available() else []
@@ -457,11 +467,21 @@ class SimulatedHuman:
         return self._go(self._free_counters(shared=True) or self._free_counters(shared=False))
 
     def _go(self, targets: List[Pos]):
-        """One primitive step towards facing the nearest target; INTERACT when facing it."""
-        return step_towards(self.floor, self.me.position, self.me.orientation,
-                            self.other.position, targets)
+        """One primitive step towards facing the nearest target; INTERACT when facing it.
+
+        If every target is cut off (the other player stands in the only way), step
+        out from in front of any station instead of freezing there.
+        """
+        action = step_towards(self.floor, self.me.position, self.me.orientation,
+                              self.other.position, targets)
+        if action == Action.STAY and targets:
+            return step_aside(self.floor, self.access, tuple(self.me.position), tuple(self.other.position))
+        return action
 
     def _log(self, t: int, status: str, action: Any = Action.STAY, parm: Any = None):
+        if status != "act":
+            action = self.unstick.filter(self.floor, tuple(self.me.position), action,
+                                         tuple(self.other.position))
         self.trace.append({"t": t, "status": status,
                            "job": self.job.describe() if self.job else None,
                            "action": action if isinstance(action, str) else list(action),

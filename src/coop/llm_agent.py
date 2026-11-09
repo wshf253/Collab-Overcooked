@@ -44,6 +44,15 @@ GRAMMAR = f"""\
 - wait(<n>): do nothing for n steps (1-{MAX_WAIT}); it ends early when your partner completes an action"""
 
 
+HANDOVER_RULES = (
+    "Reaching stations: the map says which stations each of you can reach. You cannot use a "
+    "station you cannot reach. If you need something that only your partner can reach (for "
+    "example a raw ingredient or a dish), you have to wait until your partner puts it on a counter "
+    "you can reach; you cannot ask for it. In the same way, you hand items to your partner by "
+    "placing them on a counter both of you can reach. Food that is served on a dish cannot be "
+    "picked up by hand: hold a dish and use fill_dish_with_food.")
+
+
 class LLMAgent(Agent):
     name = "llm"
 
@@ -102,7 +111,7 @@ class LLMAgent(Agent):
     def act(self, state, t):
         if self.kitchen is None:
             self.kitchen = Kitchen(self.mdp, self.context["index"], state)
-            self.executor = Executor(self.kitchen)
+            self.executor = Executor(self.kitchen, self.context["episode_seed"])
             self.system = self._system_prompt()
         self._watch(state, t)
         ended = self.executor.update(state)
@@ -166,6 +175,7 @@ class LLMAgent(Agent):
             f"at a time. A correct delivery gives +20 points and opens the next order; a wrong delivery "
             f"costs {ctx['wrong_delivery_penalty']:g} points and the order stays open. Items placed in a "
             "utensil that match no recipe are thrown away when the utensil is started.",
+            HANDOVER_RULES,
             f"Kitchen map (you are player {ctx['index']}):\n{k.map_text()}",
             f"Dishes that can be ordered:\n\n{recipes}",
             f"Actions (choose exactly one each time you are asked):\n{GRAMMAR}",

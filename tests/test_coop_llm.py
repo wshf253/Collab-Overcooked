@@ -179,6 +179,8 @@ class LLMAgentTests(unittest.TestCase):
         self.assertEqual(log["fallbacks"], 0)
         self.assertTrue(any(c["kind"] == "probe" for c in log["calls"]))
         self.assertTrue(all(d["attempts"][0]["partner"] == "mock belief" for d in log["decisions"]))
+        for cond in ("direct", "tom", "memory"):
+            self.assertIn("you cannot ask for it", self.ep(cond, 1, 1, "agent_log.json")["system_prompt"])
 
     def test_prompts_never_reveal_the_partner(self):
         for cond in ("direct", "tom", "memory"):

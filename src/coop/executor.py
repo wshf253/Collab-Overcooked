@@ -12,7 +12,8 @@ may use any station it can reach.
     fill_dish_with_food(<utensil>)         with a dish in hand, collect food (waits if still cooking)
     deliver_soup()                         serve the held food
     place_obj_on_counter()                 put the held item on a free counter, shared ones first
-    wait(<n>)                              stay for n steps (1-20); ends early when the partner
+    wait(<n>)                              stay for n steps (1-20), first stepping aside if standing
+                                           in front of a station; ends early when the partner
                                            completes an action
 
 An action is checked when it is chosen (``check``) and again on every step
@@ -21,6 +22,7 @@ while it runs. It ends as ``done`` when its interaction takes effect, or as
 """
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
@@ -29,7 +31,7 @@ from overcooked_ai_py.mdp.actions import Action
 
 from .env import START
 from .kitchen import Kitchen
-from .nav import Pos, facing, step_towards
+from .nav import Pos, Unstick, access_cells, facing, step_aside, step_towards
 
 MAX_WAIT = 20
 MAX_STEPS = 40          # an action that has not finished after this many steps fails
@@ -73,8 +75,10 @@ def parse_macro(text: str) -> Tuple[Optional[Macro], str]:
 
 
 class Executor:
-    def __init__(self, kitchen: Kitchen):
+    def __init__(self, kitchen: Kitchen, seed: int = 0):
         self.k = kitchen
+        self.unstick = Unstick(random.Random(f"executor:{seed}:{kitchen.index}"))
+        self.access = access_cells(kitchen.terrain, kitchen.floor)
         self.macro: Optional[Macro] = None
         self.steps = 0
         self.pending_interact = False
@@ -214,12 +218,18 @@ class Executor:
         """Primitive (action, parameter) for the running action."""
         m = self.macro
         self.steps += 1
-        if m is None or m.name == "wait":
-            return Action.STAY, None
-        targets, parm = self._targets(m, state)
         me = state.players[self.k.index]
-        action = step_towards(self.k.floor, tuple(me.position), me.orientation,
-                              tuple(state.players[self.k.other].position), targets)
+        other = tuple(state.players[self.k.other].position)
+        if m is None or m.name == "wait":
+            # While waiting, step out from in front of a station so the partner can use it.
+            aside = step_aside(self.k.floor, self.access, tuple(me.position), other)
+            return self.unstick.filter(self.k.floor, tuple(me.position), aside, other), None
+        targets, parm = self._targets(m, state)
+        action = step_towards(self.k.floor, tuple(me.position), me.orientation, other, targets)
+        if action == Action.STAY and targets:
+            # Cut off by the partner: step out from in front of any station instead of freezing.
+            action = step_aside(self.k.floor, self.access, tuple(me.position), other)
+        action = self.unstick.filter(self.k.floor, tuple(me.position), action, other)
         if action == Action.INTERACT:
             if m.name == "fill_dish_with_food":
                 status, _, _, _ = self.k.utensil_status(state, m.args[0])

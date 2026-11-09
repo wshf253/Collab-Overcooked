@@ -89,6 +89,37 @@ more than as a different job mix: in a split kitchen with one open order, a
 player rarely has jobs from two stages to choose between. Maps where both
 players can do every stage will separate the preference types better.
 
+## Layouts
+
+| layout | map | what it tests |
+|---|---|---|
+| `new_env` | Collab-Overcooked's original 5×5 kitchen, split by a column of counters. Left side: ingredient dispenser, chopping board, dish dispenser, blender. Right side: pot, oven, serving location. Items pass over the 3 shared counters. | Fixed roles: the right player cooks and serves, the left player supplies. |
+| `open_env` | 7×5 open kitchen with one of each station around the walls; both players can reach everything. | Roles are chosen, so who does which stage (preference) is visible. Players can also get in each other's way. |
+
+```
+new_env        open_env
+XXXPX          XXXPXXX
+I X1X          I     O
+C2X X          C 1 2 S
+D X O          D     B
+XBXSX          XXXXXXX
+```
+
+`open_env.layout` is `new_env.layout` with a different grid; a test keeps their
+recipes identical. Choose the layout in a config (`layout:`) or with
+`--layout` on `coop.days` and `coop.screen`.
+
+Movement rules that make open kitchens work (partner and LLM executor alike):
+an idle player steps off cells in front of a station; a player whose way is
+cut off steps aside instead of freezing; after a blocked move, a player gives
+way with probability ½ (seeded). On `new_env` these change results by at most
+a few points, because the two sides never meet.
+
+Screen on `open_env` (8 seeds, partner vs `steady`): steady 295; `prep_first`
+does 92% prep, `serve_first` 83% serving (steady about 39% and 35%); `slow`
+is active 8% of the time (steady 66%); `sloppy` slips 1.5–3.5 times and
+`flaky` abandons 9–12.5 jobs per episode.
+
 ## Days (`coop.days`)
 
 A **run** is one condition (ego agent settings), one partner persona and one
@@ -157,6 +188,11 @@ the same abilities and there are no messages.
   and a `VALID_ACTIONS` list of actions that can start now. It never sees the
   partner's persona, traits or true jobs, or the partner's planned actions. A
   test scans every prompt for them.
+- **Rules about reaching stations** are part of the system prompt for every
+  condition: you cannot use a station you cannot reach; something only your
+  partner can reach has to be put on a counter by them (you cannot ask);
+  hand items over on counters both can reach; food served on a dish cannot be
+  picked up by hand.
 - **Actions** use Collab-Overcooked's names, with no role split:
   `pickup(item, place)`, `put_obj_in_utensil(u)`, `cut/cook/bake/stir(u)`,
   `fill_dish_with_food(u)`, `deliver_soup()`, `place_obj_on_counter()`,
@@ -259,16 +295,28 @@ Small first run (one condition, one persona, 2 days × 1 short episode):
 lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_smoke --conditions tom_memory --personas slow --run-seeds 0 --days 2 --episodes-per-day 1 --horizon 150
 ```
 
-Full design:
+Full design, split map (`new_env`):
 
 ```bash
-lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm --workers 16
+lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_v2 --workers 16
+```
+
+Full design, open kitchen (`open_env`):
+
+```bash
+lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open_env --out outputs/days_llm_open --workers 16
+```
+
+Partner screen on the open kitchen:
+
+```bash
+lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.screen --layout open_env --out outputs/coop_screen_open.json
 ```
 
 ## Not built yet
 
-Partial observability (view radius), the order-display tile, maps where both
-players can reach every station, and an LLM-simulated human partner.
+Partial observability (view radius), the order-display tile, an open kitchen
+with two pots, and an LLM-simulated human partner.
 
 ## Other environment changes
 

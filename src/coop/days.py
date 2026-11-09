@@ -435,10 +435,11 @@ def main(argv=None):
     ap.add_argument("--days", type=int)
     ap.add_argument("--episodes-per-day", type=int)
     ap.add_argument("--horizon", type=int)
+    ap.add_argument("--layout", help="layout file name, e.g. new_env (split) or open_env (open kitchen)")
     args = ap.parse_args(argv)
     cfg = load_config(args.config, conditions=args.conditions, personas=args.personas,
                       run_seeds=args.run_seeds, days=args.days, episodes_per_day=args.episodes_per_day,
-                      horizon=args.horizon)
+                      horizon=args.horizon, layout=args.layout)
     results = run_all(cfg, args.out, args.workers, log=lambda s: print(s, file=sys.stderr, flush=True))
     failed = [r for r in results["runs"] if r["status"] != "ok"]
     print(format_table(cfg, results["table"]))

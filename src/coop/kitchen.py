@@ -99,8 +99,15 @@ class Kitchen:
         for tile, name in (("I", "ingredient dispenser"), ("D", "dish dispenser"), ("S", "serving location")):
             for p in self.cells.get(tile, []):
                 legend.append(f"  {name} at {p}: reachable by {self.side(p)}")
-        shared = [p for p in self.cells.get("X", []) if self.mine(p) and self.theirs(p)]
-        legend.append(f"  counters both of you can reach (for handing items over): {shared}")
+        counters = [p for p in self.cells.get("X", []) if self.mine(p) or self.theirs(p)]
+        shared = [p for p in counters if self.mine(p) and self.theirs(p)]
+        stations = list(self.utensils.values()) + [p for t in "IDS" for p in self.cells.get(t, [])]
+        if all(self.mine(p) and self.theirs(p) for p in stations):
+            legend.append("  Both of you can reach every station.")
+        if counters and len(shared) == len(counters):
+            legend.append("  Both of you can reach every counter.")
+        else:
+            legend.append(f"  counters both of you can reach (for handing items over): {shared}")
         return "\n".join(rows + legend)
 
     def utensil_status(self, state, u: str) -> Tuple[str, Optional[str], List[str], int]:
