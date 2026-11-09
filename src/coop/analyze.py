@@ -190,7 +190,33 @@ def analyse(out: Path) -> Dict[str, Any]:
             "vs_direct": _mean_se([e["summary"]["score"] - by_key[("direct",) + k(e)]["summary"]["score"]
                                    for e in allc if ("direct",) + k(e) in by_key]) if cond != "direct" else None,
         }
+    report["dishes"] = dish_table(eps)
     return report
+
+
+def dish_table(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """condition -> dish -> mean steps from issue to correct delivery, over completed orders.
+
+    Also the open order at the end of each episode is counted as unfinished, so a
+    dish the ego cannot finish shows up even though it has no duration.
+    """
+    out: Dict[str, Any] = defaultdict(dict)
+    acc: Dict[str, Dict[str, List[int]]] = defaultdict(lambda: defaultdict(list))
+    unfinished: Dict[str, Counter] = defaultdict(Counter)
+    for e in eps:
+        for o in e["summary"].get("orders", []):
+            if o.get("completed_t") is not None:
+                acc[e["condition"]][o["name"]].append(o["completed_t"] - o["issued_t"] + 1)
+            else:
+                unfinished[e["condition"]][o["name"]] += 1
+    for cond, dishes in acc.items():
+        for dish, ds in dishes.items():
+            out[cond][dish] = {"completed": len(ds), "mean_steps": statistics.fmean(ds),
+                               "unfinished_at_end": unfinished[cond][dish]}
+    for cond, c in unfinished.items():
+        for dish, n in c.items():
+            out[cond].setdefault(dish, {"completed": 0, "mean_steps": None, "unfinished_at_end": n})
+    return dict(out)
 
 
 def _fmt(ms, signed=True):
@@ -237,6 +263,19 @@ def format_report(rep: Dict[str, Any]) -> str:
                          f"{n(r['full_waits_with_ready_food_per_episode']):>11}{n(r['llm_calls_per_episode'], '{:.0f}'):>7}"
                          f"{n(r['invalid_per_episode']):>8}{n(r['fallbacks_per_episode']):>7}"
                          f"{n(r['wrong_deliveries_per_episode']):>6}")
+    dishes = rep.get("dishes") or {}
+    conds = [c for c in list(rep["conditions"]) + [REFERENCE] if c in dishes]
+    names = sorted({d for c in conds for d in dishes[c]})
+    if names:
+        lines.append("\n== steps per completed order, by dish (completed orders in brackets) ==")
+        lines.append(f"  {'dish':<36}" + "".join(f"{c:>16}" for c in conds))
+        for d in names:
+            cells = []
+            for c in conds:
+                r = dishes[c].get(d)
+                cells.append(f"{r['mean_steps']:.1f} ({r['completed']})" if r and r["mean_steps"] is not None
+                             else "-")
+            lines.append(f"  {d:<36}" + "".join(f"{x:>16}" for x in cells))
     lines.append("\n== why replies were invalid (all personas; share of invalid replies) ==")
     for cond, rows in rep["conditions"].items():
         reasons, actions, pairs = Counter(), Counter(), Counter()

@@ -215,6 +215,10 @@ class LLMAgentTests(unittest.TestCase):
         self.assertEqual(row["probe"]["commitment"]["truth"], "abandons tasks")
         self.assertIsNotNone(rep["overall"]["tom"]["vs_direct"]["mean"])
         self.assertIn("partner probe", format_report(rep))
+        self.assertIn("steps per completed order, by dish", format_report(rep))
+        for cond in ("direct", "tom", "memory"):
+            for dish, r in rep["dishes"].get(cond, {}).items():
+                self.assertIn(dish, ("boiled_egg", "baked_carrot_soup"))
         system = self.ep("tom", 1, 1, "agent_log.json")["system_prompt"]
         fake = {"system_prompt": system, "decisions": [], "calls": [
             {"kind": "decide", "user": "Utensils: pot0: boiled_egg is ready to take out; blender0: x is ready "
