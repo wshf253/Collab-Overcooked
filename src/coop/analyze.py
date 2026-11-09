@@ -57,6 +57,33 @@ def _reachable_utensils(system_prompt: str) -> List[str]:
                       system_prompt or "", flags=re.M)
 
 
+def _reason_kind(error: str) -> str:
+    """Group executor/parser messages: drop item and utensil names, keep the reason."""
+    e = re.sub(r"\(.*\)", "(...)", error)
+    e = re.sub(r"'[^']*'", "'X'", e)
+    e = re.sub(r"\b(pot|oven|chopping_board|blender)\d+\b", "U", e)
+    e = re.sub(r"\b(?:no counter you can reach holds|no finished|you hold|has no finished) \w+",
+               lambda m: m.group(0).rsplit(" ", 1)[0] + " X", e)
+    e = re.sub(r"^\w+ must be served on a dish", "X must be served on a dish", e)
+    return e[:90]
+
+
+def _action_kind(action: Any) -> str:
+    if not isinstance(action, str) or not action.strip():
+        return "<no action>"
+    a = action.strip()
+    m = re.match(r"\s*(\w+)\s*\((.*)\)", a)
+    if not m:
+        return "<not name(args)>: " + a[:30]
+    name, args = m.group(1), [x.strip() for x in m.group(2).split(",")]
+    if name == "pickup" and len(args) == 2:
+        place = re.sub(r"\d+$", "", args[1])
+        return f"pickup(_, {place})"
+    if name == "wait":
+        return f"wait({args[0][:8]})"
+    return f"{name}({re.sub(r'[0-9]+$', '', args[0]) if args and args[0] else ''})"
+
+
 def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
     decisions = log.get("decisions") or []
     calls = [c for c in log.get("calls") or [] if c.get("kind") == "decide"]
@@ -79,7 +106,16 @@ def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
                             for u in mine):
             missed_ready += 1
     first = [d["attempts"][0] for d in decisions if d.get("attempts")]
-    return {"decisions": len(decisions), "wait_share": len(waits) / len(chosen) if chosen else None,
+    reasons, bad_actions, fallback_actions = Counter(), Counter(), Counter()
+    for d in decisions:
+        for a in d.get("attempts") or []:
+            if a.get("error"):
+                reasons[_reason_kind(a["error"])] += 1
+                bad_actions[_action_kind(a.get("action"))] += 1
+        if d.get("attempts") and all(a.get("error") for a in d["attempts"]):
+            fallback_actions[" -> ".join(_action_kind(a.get("action")) for a in d["attempts"])] += 1
+    return {"decisions": len(decisions),
+            "invalid_reasons": reasons, "invalid_actions": bad_actions, "fallback_pairs": fallback_actions, "wait_share": len(waits) / len(chosen) if chosen else None,
             "mean_wait_chosen": statistics.fmean(lengths) if lengths else None,
             "waits_full": full, "waits_ended_by_partner": early,
             "full_waits_with_ready_food": missed_ready,
@@ -135,6 +171,9 @@ def analyse(out: Path) -> Dict[str, Any]:
                 "waits_ended_by_partner_per_episode": _mean_se([d["waits_ended_by_partner"] for d in ds])["mean"],
                 "full_waits_with_ready_food_per_episode": _mean_se([d["full_waits_with_ready_food"] for d in ds])["mean"],
                 "action_mix": dict(sum((d["action_mix"] for d in ds), Counter())),
+                "invalid_reasons": dict(sum((d["invalid_reasons"] for d in ds), Counter()).most_common()),
+                "invalid_actions": dict(sum((d["invalid_actions"] for d in ds), Counter()).most_common()),
+                "fallback_pairs": dict(sum((d["fallback_pairs"] for d in ds), Counter()).most_common()),
                 "llm_calls_per_episode": _mean_se([u.get("calls") for u in usage])["mean"],
                 "invalid_per_episode": _mean_se([e["log"].get("invalid_actions") for e in mine])["mean"],
                 "fallbacks_per_episode": _mean_se([e["log"].get("fallbacks") for e in mine])["mean"],
@@ -198,6 +237,20 @@ def format_report(rep: Dict[str, Any]) -> str:
                          f"{n(r['full_waits_with_ready_food_per_episode']):>11}{n(r['llm_calls_per_episode'], '{:.0f}'):>7}"
                          f"{n(r['invalid_per_episode']):>8}{n(r['fallbacks_per_episode']):>7}"
                          f"{n(r['wrong_deliveries_per_episode']):>6}")
+    lines.append("\n== why replies were invalid (all personas; share of invalid replies) ==")
+    for cond, rows in rep["conditions"].items():
+        reasons, actions, pairs = Counter(), Counter(), Counter()
+        for r in rows.values():
+            reasons.update(r["invalid_reasons"])
+            actions.update(r["invalid_actions"])
+            pairs.update(r["fallback_pairs"])
+        total = sum(reasons.values())
+        lines.append(f"{cond}: {total} invalid replies, {sum(pairs.values())} fallbacks")
+        for k, v in reasons.most_common(6):
+            lines.append(f"  {v / total:>5.0%}  {k}")
+        lines.append("  invalid actions: " + ", ".join(f"{k} {v / total:.0%}" for k, v in actions.most_common(6)))
+        if pairs:
+            lines.append("  fallbacks (first -> retry): " + ", ".join(f"{k} x{v}" for k, v in pairs.most_common(4)))
     health = [(c, p, r) for c, rows in rep["conditions"].items() for p, r in rows.items()
               if r["thinking"] or r["truncated"] or r["errors"]]
     lines.append("\n== LLM health ==")

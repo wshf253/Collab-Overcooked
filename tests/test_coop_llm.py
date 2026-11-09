@@ -226,6 +226,14 @@ class LLMAgentTests(unittest.TestCase):
         st = decision_stats(fake)     # ego is slot 0: it reaches pot0 and oven0, not blender0
         self.assertEqual((st["waits_full"], st["waits_ended_by_partner"], st["full_waits_with_ready_food"]),
                          (2, 1, 1))
+        st = decision_stats({"decisions": [
+            {"chosen": "wait(1)", "attempts": [{"action": "wait(1..20)", "error": "wait needs a whole number of steps"},
+                                               {"action": "pickup(egg, ingredient_dispenser)",
+                                                "error": "you cannot reach the ingredient dispenser"}]},
+            {"chosen": "cook(pot0)", "attempts": [{"action": "cook(pot0)", "error": ""}]}]})
+        self.assertEqual(st["invalid_reasons"], {"wait needs a whole number of steps": 1,
+                                                 "you cannot reach the ingredient dispenser": 1})
+        self.assertEqual(st["fallback_pairs"], {"wait(1..20) -> pickup(_, ingredient_dispenser)": 1})
 
     def test_probe_is_scored_against_the_true_persona(self):
         probe = self.ep("direct", 1, 1, "summary.json")["probe"]
