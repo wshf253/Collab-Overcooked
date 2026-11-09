@@ -304,22 +304,24 @@ lab-run --new --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.
 
 The three full designs below can run at the same time, one GPU each. When more than one GPU job runs at once, start each with `lab-run --new --spare --gpus 1`.
 
+Speed: one LLM call is made almost every step, so a run is limited by how many requests vLLM handles at once. Each config has 48 LLM runs (4 conditions × 6 personas × 2 run seeds), so `--workers 48` with `MAX_NUM_SEQS=48` plays them all at once. The worker processes mostly wait for the model, so 24 CPUs are enough. With the spare pool's 84 CPUs and 341 GB, three jobs fit at `--cpus 24 --mem 110G` each (3 × 120G would be 360 GB). Stopping a job and restarting it with the same `--out` keeps every finished episode; `--workers` and `MAX_NUM_SEQS` are not part of the config.
+
 Full design, split map (`new_env`):
 
 ```bash
-lab-run --new --spare --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_v2 --workers 16
+lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm_v2 --workers 48
 ```
 
 Full design, open kitchen (`open_env`):
 
 ```bash
-lab-run --new --spare --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open_env --out outputs/days_llm_open --workers 16
+lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open_env --out outputs/days_llm_open --workers 48
 ```
 
 Full design, open kitchen with two of every utensil (`open2_env`):
 
 ```bash
-lab-run --new --spare --gpus 1 -- bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open2_env --out outputs/days_llm_open2 --workers 16
+lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --layout open2_env --out outputs/days_llm_open2 --workers 48
 ```
 
 Partner screens on the open kitchens:
