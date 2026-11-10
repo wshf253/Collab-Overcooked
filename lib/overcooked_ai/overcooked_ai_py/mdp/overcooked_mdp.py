@@ -1273,17 +1273,17 @@ class OvercookedGridworld(object):
         if state.order_list is None:
             return state, self.delivery_reward
     
-        # If the delivered soup is the one currently required
+        # If the delivered soup is one currently required. Only the first order is open
+        # unless num_open_orders > 1 (set by the coop setting); then any of the first
+        # num_open_orders orders can be served, and the first one that matches is closed.
         assert not self.is_terminal(state)
-        current_order = state.order_list[0]
-        if current_order == 'any' or soup_type == current_order:
-            if (soup_type in self.Recipe.recipe_need_dish) and soup_obj.catagory == 'with_dish':
-                state.order_list = state.order_list[1:]
-                if len(state.order_list) <= state.k_order:
-                    state.order_list = self.add_elements_based_on_probability(state.order_list, self.order_probability)
-                return state, self.delivery_reward
-            elif soup_type not in self.Recipe.recipe_need_dish and soup_obj.catagory != 'with_dish':
-                state.order_list = state.order_list[1:]
+        open_orders = state.order_list[:max(1, getattr(self, "num_open_orders", 1))]
+        match = next((i for i, o in enumerate(open_orders) if o == 'any' or soup_type == o), None)
+        if match is not None:
+            plated_ok = ((soup_type in self.Recipe.recipe_need_dish) and soup_obj.catagory == 'with_dish') or \
+                        (soup_type not in self.Recipe.recipe_need_dish and soup_obj.catagory != 'with_dish')
+            if plated_ok:
+                state.order_list = state.order_list[:match] + state.order_list[match + 1:]
                 if len(state.order_list) <= state.k_order:
                     state.order_list = self.add_elements_based_on_probability(state.order_list, self.order_probability)
                 return state, self.delivery_reward

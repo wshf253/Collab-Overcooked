@@ -33,16 +33,20 @@ def _player(spec) -> SimulatedHuman:
 
 
 def simulate(menu, layout, horizon, seed, persona, partner_index, penalty=20,
-             teammate="steady") -> Tuple[ContinuousOrderEnv, List[SimulatedHuman]]:
-    """One episode: ``persona`` in slot ``partner_index``, ``teammate`` in the other slot."""
-    env = ContinuousOrderEnv(menu, layout=layout, horizon=horizon, wrong_delivery_penalty=penalty)
+             teammate="steady", view_radius=None, open_orders=1) -> Tuple[ContinuousOrderEnv, List[SimulatedHuman]]:
+    """One episode: ``persona`` in slot ``partner_index``, ``teammate`` in the other slot.
+
+    ``view_radius`` (None = full view) applies to both players; ``open_orders`` orders are open at once.
+    """
+    env = ContinuousOrderEnv(menu, layout=layout, horizon=horizon, wrong_delivery_penalty=penalty,
+                             open_orders=open_orders)
     with contextlib.redirect_stdout(io.StringIO()):   # the legacy MDP prints every step
         env.reset(seed)
     players: List[SimulatedHuman] = [None, None]
     players[partner_index] = _player(persona)
     players[1 - partner_index] = _player(teammate)
     for i, p in enumerate(players):
-        p.reset(env.mdp, i, seed)
+        p.reset(env.mdp, i, seed, view_radius=view_radius)
     while not env.done:
         moves = [p.act(env.state, env.t) for p in players]
         with contextlib.redirect_stdout(io.StringIO()):
@@ -50,8 +54,10 @@ def simulate(menu, layout, horizon, seed, persona, partner_index, penalty=20,
     return env, players
 
 
-def run_episode(menu, layout, horizon, seed, persona, partner_index, penalty=20) -> Dict:
-    env, players = simulate(menu, layout, horizon, seed, persona, partner_index, penalty)
+def run_episode(menu, layout, horizon, seed, persona, partner_index, penalty=20,
+                view_radius=None, open_orders=1) -> Dict:
+    env, players = simulate(menu, layout, horizon, seed, persona, partner_index, penalty,
+                            view_radius=view_radius, open_orders=open_orders)
     return {"env": env.summary(), "partner": players[partner_index].summary(),
             "ego": players[1 - partner_index].summary()}
 
@@ -89,6 +95,8 @@ def main(argv=None):
     ap.add_argument("--layout", default="new_env")
     ap.add_argument("--horizon", type=int, default=400)
     ap.add_argument("--menu", nargs="+", default=DEFAULT_MENU)
+    ap.add_argument("--view-radius", type=int, default=None, help="partial view for both players")
+    ap.add_argument("--open-orders", type=int, default=1, help="orders open at once")
     ap.add_argument("--out", type=Path, default=None, help="JSON with every episode and the aggregates")
     args = ap.parse_args(argv)
 
@@ -96,7 +104,8 @@ def main(argv=None):
     results, table = {}, []
     for index in args.partner_index:
         for persona in args.personas:
-            runs = [run_episode(args.menu, args.layout, args.horizon, s, persona, index) for s in args.seeds]
+            runs = [run_episode(args.menu, args.layout, args.horizon, s, persona, index,
+                                view_radius=args.view_radius, open_orders=args.open_orders) for s in args.seeds]
             agg = aggregate(runs)
             results[f"{persona}@p{index}"] = {"aggregate": agg, "runs": runs}
             st = agg["partner_status"]
@@ -106,7 +115,8 @@ def main(argv=None):
                           sg.get("serve", 0), agg["partner_slips"], agg["partner_abandons"],
                           agg["partner_yields"], agg["partner_left_unfinished"], agg["rejected"]))
 
-    print(f"layout {args.layout}, horizon {args.horizon}, seeds {args.seeds}, menu {args.menu}")
+    print(f"layout {args.layout}, horizon {args.horizon}, seeds {args.seeds}, menu {args.menu}, "
+          f"view radius {args.view_radius}, open orders {args.open_orders}")
     print("p = player slot of the simulated partner (the other slot is 'steady'); means over seeds")
     head = ("p", "persona", "score", "orders", "wrong", "steps/ord", "act%", "prep%", "cook%", "serve%",
             "slips", "abandons", "yields", "unfin", "rejected")

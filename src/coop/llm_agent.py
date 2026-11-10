@@ -30,6 +30,7 @@ from .executor import MAX_WAIT, Executor, parse_macro
 from .kitchen import Kitchen, held_text
 from .llm import Usage, build_backend, parse_json
 from .profile import PROFILE_FIELDS, PROFILE_GUIDE, clean_profile, clean_shares
+from .view import Belief
 
 GRAMMAR = f"""\
 - pickup(<item>, ingredient_dispenser): take a raw ingredient (hands must be empty)
@@ -75,6 +76,8 @@ class LLMAgent(Agent):
     def begin_episode(self, mdp, index, context):
         self.context = context
         self.mdp = mdp
+        radius = context.get("view_radius")
+        self.belief = Belief(mdp, index, radius) if radius is not None else None
         self.kitchen: Optional[Kitchen] = None      # built on the first act (needs the start state)
         self.executor: Optional[Executor] = None
         self.partner_log: List[Tuple[int, str]] = []
@@ -98,8 +101,13 @@ class LLMAgent(Agent):
 
     def observe(self, t, reward, info):
         self.score += reward
+        partner_visible = getattr(self, "_view_partner_visible", True)
         for d in info.get("deliveries", []):
-            who = "you" if d.agent == self.context["index"] else "your partner"
+            if d.agent == self.context["index"]:
+                who = "you"
+            else:
+                # The score is public; who delivered is only known if the partner was in view.
+                who = "your partner" if partner_visible else "someone (out of your view)"
             if d.correct:
                 self.orders_done += 1
                 self.events.append(f"t={t}: {who} delivered {d.item}: correct (+20)")
@@ -116,6 +124,10 @@ class LLMAgent(Agent):
             self.kitchen = Kitchen(self.mdp, self.context["index"], state)
             self.executor = Executor(self.kitchen, self.context["episode_seed"])
             self.system = self._system_prompt()
+        if self.belief is not None:
+            # From here on the agent only uses what it sees and remembers.
+            state = self.belief.update(state, t)
+            self._view_partner_visible = state.players[self.kitchen.other].visible
         self._watch(state, t)
         ended = self.executor.update(state)
         if ended:
@@ -198,15 +210,23 @@ class LLMAgent(Agent):
             "have the same abilities: either of you can use any station you can reach. You cannot talk "
             "to your partner; there are no messages. Your partner is a person with their own habits. "
             "Watch what they do and work with them.",
-            f"Goal: complete as many orders as possible in {ctx['horizon']} time steps. One order is open "
-            f"at a time. A correct delivery gives +20 points and opens the next order; a wrong delivery "
-            f"costs {ctx['wrong_delivery_penalty']:g} points and the order stays open. Items placed in a "
-            "utensil that match no recipe are thrown away when the utensil is started.",
+            f"Goal: complete as many orders as possible in {ctx['horizon']} time steps. " + (
+                "One order is open at a time. A correct delivery gives +20 points and opens the next "
+                "order; " if ctx.get("open_orders", 1) <= 1 else
+                f"Up to {ctx['open_orders']} orders are open at once, and you may serve them in any order. "
+                "A correct delivery of any open order gives +20 points, closes it and opens a new one; ")
+            + f"a wrong delivery costs {ctx['wrong_delivery_penalty']:g} points and the orders stay open. "
+            "Items placed in a utensil that match no recipe are thrown away when the utensil is started.",
             HANDOVER_RULES,
             f"Kitchen map (you are player {ctx['index']}):\n{k.map_text()}",
             f"Dishes that can be ordered:\n\n{recipes}",
             f"Actions (choose exactly one each time you are asked):\n{GRAMMAR}",
         ]
+        if self.belief is not None:
+            parts.insert(3, f"What you can see: only cells within {self.belief.radius} steps of you in every "
+                         "direction (including diagonals). For everything else you are told what you saw "
+                         "there last and when; it may have changed since. Your partner's actions are known "
+                         "only when you saw them. The orders are always visible.")
         notes = self.memory.get("notes") if self.use_memory else None
         if notes:
             lines = []
@@ -221,16 +241,46 @@ class LLMAgent(Agent):
     def _observation(self, state, t) -> str:
         k = self.kitchen
         me, other = state.players[k.index], state.players[k.other]
-        order = state.order_list[0] if state.order_list else None
+        n_open = max(1, self.context.get("open_orders", 1))
+        orders = list(state.order_list[:n_open]) if state.order_list else []
+        dish = lambda o: o + (" (served on a dish)" if k.need_dish(o) else "")
         lines = [f"Time step {t} of {self.context['horizon']}. Score {self.score:+g}. "
                  f"Orders completed: {self.orders_done}.",
-                 f"Current order: {order}" + (" (served on a dish)" if order and k.need_dish(order) else ""),
-                 f"You: at {tuple(me.position)}, holding {held_text(me.held_object)}.",
-                 f"Partner: at {tuple(other.position)}, holding {held_text(other.held_object)}.",
-                 "Utensils: " + "; ".join(k.utensil_text(state, u) for u in k.utensils) + "."]
-        items = [f"{p} {held_text(state.objects[p])} (reachable by {k.side(p)})"
+                 (f"Current order: {dish(orders[0])}" if n_open == 1 and orders else
+                  "Open orders: " + (", ".join(dish(o) for o in orders) or "none")),
+                 f"You: at {tuple(me.position)}, holding {held_text(me.held_object)}."]
+        seen = self.belief is not None
+        if seen and not getattr(other, "visible", True):
+            if other.seen_t is None:
+                lines.append("Partner: not seen yet.")
+            else:
+                lines.append(f"Partner: not in view; last seen at {tuple(other.position)} at t={other.seen_t}, "
+                             f"holding {held_text(other.held_object)}.")
+        else:
+            lines.append(f"Partner: at {tuple(other.position)}, holding {held_text(other.held_object)}.")
+
+        def when(pos):
+            if not seen or state.visible(pos):
+                return ""
+            last = state.last_seen(pos)
+            return " (not seen yet)" if last is None else f" (last seen at t={last})"
+
+        utensils = []
+        for u in k.utensils:
+            pos = k.utensils[u]
+            if seen and state.last_seen(pos) is None:
+                utensils.append(f"{u}: not seen yet")
+            else:
+                utensils.append(k.utensil_text(state, u) + when(pos))
+        lines.append("Utensils: " + "; ".join(utensils) + ".")
+        items = [f"{p} {held_text(state.objects[p])} (reachable by {k.side(p)}){when(p)}"
                  for p in k.counters() if p in state.objects]
-        lines.append("Counters: " + ("; ".join(items) if items else "all empty") + ".")
+        if seen:
+            unseen = sum(1 for p in k.counters() if not state.visible(p))
+            lines.append("Counters you know of: " + ("; ".join(items) if items else "none with items") +
+                         f". ({unseen} counters are out of view.)")
+        else:
+            lines.append("Counters: " + ("; ".join(items) if items else "all empty") + ".")
         recent = self.partner_log[-self.partner_log_lines:]
         if recent:
             lines.append("Your partner's completed actions (most recent last):")
@@ -311,8 +361,10 @@ class LLMAgent(Agent):
             f"The episode is over (day {result['day']}, episode {result['episode']}). Team score "
             f"{result['score']:+g}, orders completed {result['orders_completed']}, wrong deliveries "
             f"{result['wrong_deliveries']}, {self.context['horizon']} steps.\n"
-            f"You completed {self.own_done} actions; your partner completed {len(self.partner_log)}.\n"
-            f"Every action your partner completed (time step: action):\n{log}\n"
+            f"You completed {self.own_done} actions; your partner completed {len(self.partner_log)}"
+            + (" that you saw" if self.belief is not None else "") + ".\n"
+            + ("Every action of your partner that you saw" if self.belief is not None else
+               "Every action your partner completed") + f" (time step: action):\n{log}\n"
             f"Events:\n{events}\n\n"
             "Describe your partner from what you saw. Stages: prep = getting raw ingredients and "
             "using the chopping board or blender; cook = using the pot or oven and moving products "

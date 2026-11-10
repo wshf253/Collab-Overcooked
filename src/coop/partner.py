@@ -40,16 +40,18 @@ from __future__ import annotations
 
 import random
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from overcooked_ai_py.mdp.actions import Action
 
 from .env import START
+from .view import Belief
 from .nav import (Pos, Unstick, access_cells, facing, floor_cells, reach, step_aside, step_towards,
                   steps_to_face, touches)
 
 STAGES = ("prep", "cook", "serve")
+HELD_WAIT = 5      # steps to wait holding an item with nowhere to put it before setting it down
 UTENSIL_STAGE = {"chopping_board": "prep", "blender": "prep", "pot": "cook", "oven": "cook"}
 
 
@@ -66,6 +68,8 @@ class Traits:
     avoid_stations: Tuple[str, ...] = ()   # utensil kinds it does not use (if the other player can)
     unfinished_rate: float = 0.0       # chance of walking away from starting a loaded utensil or
                                        # taking finished food out of one
+    order_focus: str = "first"         # with several open orders: work on the oldest ("first")
+                                       # or the newest ("last") first
 
     def __post_init__(self):
         unknown = set(self.preference) - set(STAGES)
@@ -79,6 +83,8 @@ class Traits:
         for name in ("slip_rate", "abandon_rate", "unfinished_rate"):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        if self.order_focus not in ("first", "last"):
+            raise ValueError("order_focus must be 'first' or 'last'")
         unknown = set(self.avoid_stations) - set(UTENSIL_STAGE)
         if unknown:
             raise ValueError(f"avoid_stations must be utensil kinds from {sorted(UTENSIL_STAGE)}: {unknown}")
@@ -116,6 +122,7 @@ class Job:
     stage: str                # prep | cook | serve | other
     dest: Optional[str] = None    # bring: product the item goes into (None = deliver the order)
     pos: Optional[Pos] = None     # station, counter or dispenser cell the job starts from
+    order: int = 0                # which open order (0 = oldest) the job serves; not part of the key
 
     @property
     def key(self) -> tuple:
@@ -125,7 +132,8 @@ class Job:
         return (self.kind, self.item, self.dest, self.pos)
 
     def describe(self) -> Dict[str, Any]:
-        return {"kind": self.kind, "item": self.item, "stage": self.stage, "dest": self.dest}
+        return {"kind": self.kind, "item": self.item, "stage": self.stage, "dest": self.dest,
+                "order": self.order}
 
 
 class SimulatedHuman:
@@ -141,8 +149,10 @@ class SimulatedHuman:
     # ------------------------------------------------------------------ #
     # Episode lifecycle
     # ------------------------------------------------------------------ #
-    def reset(self, mdp, index: int, seed: int) -> None:
+    def reset(self, mdp, index: int, seed: int, view_radius: Optional[int] = None) -> None:
+        """``view_radius``: play from a partial view (see coop.view); None = full view."""
         self.mdp, self.index = mdp, index
+        self.belief = Belief(mdp, index, view_radius) if view_radius is not None else None
         # A string seed is hashed with SHA-512 by `random`: reproducible across runs.
         self.rng = random.Random(f"{seed}:{index}:{self.name}")
         # Separate stream for giving way, so slips and abandons do not depend on traffic.
@@ -176,9 +186,13 @@ class SimulatedHuman:
         self.events: List[Dict[str, Any]] = []
         self._prev_other: Optional[Pos] = None
         self._last_other: Optional[Pos] = None
+        self.explore_target: Optional[Pos] = None
+        self.held_wait = 0
 
     def act(self, state, t: int) -> Tuple[Any, Any]:
         """Return (primitive action, interaction parameter) for this step."""
+        if self.belief is not None:
+            state = self.belief.update(state, t)
         self._look(state)
         jobs = self._jobs()
         if self.job is not None:
@@ -187,6 +201,9 @@ class SimulatedHuman:
                 self._end_job()       # finished, or no longer possible
             else:
                 self.job = current    # same job; the item may have moved
+        if (self.job is not None and self.me.held_object is None
+                and self.cooldown.get(self.job.key, -1) > t):
+            self._end_job()           # set down on purpose (see _carry); come back to it later
         if (self.job is not None and self.traits.yield_tasks and self.me.held_object is None
                 and self._claimed(self.job)):
             self.events.append({"t": t, "type": "yield", "job": self.job.describe()})
@@ -205,6 +222,9 @@ class SimulatedHuman:
         if self.job is None:
             job, why = self._choose(jobs, t)
             if job is None:
+                if self.belief is not None and why == "no_job":
+                    # Partial view, nothing known to do: go and look at the station seen longest ago.
+                    return self._log(t, "looking", self._explore())
                 # Idle: step out from in front of a station so the other player can use it.
                 aside = step_aside(self.floor, self.access, tuple(self.me.position), tuple(self.other.position))
                 return self._log(t, why, aside)
@@ -239,10 +259,30 @@ class SimulatedHuman:
     # ------------------------------------------------------------------ #
     def _end_job(self):
         self.job, self.slip, self.slip_decided, self.delay_left = None, None, False, 0
+        self.held_wait = 0
 
-    def _rank(self, job: Job) -> int:
+    def _rank(self, job: Job) -> Tuple[int, int]:
         pref = self.traits.preference
-        return pref.index(job.stage) if job.stage in pref else len(pref)
+        stage = pref.index(job.stage) if job.stage in pref else len(pref)
+        return stage, (job.order if self.traits.order_focus == "first" else -job.order)
+
+    def _explore(self):
+        """Walk towards the station seen longest ago, keeping that target until it is in view
+        (re-choosing every step makes a player turn back and forth on the spot)."""
+        stations = [p for p in list(self.kind_at) + [q for t in "IDS" for q in self.cells.get(t, [])]
+                    if self._mine(p)]
+        if not stations:
+            return Action.STAY
+        if self.explore_target is None or self.state.visible(self.explore_target):
+            unseen = [p for p in stations if not self.state.visible(p)]
+            if not unseen:
+                self.explore_target = None
+                return step_aside(self.floor, self.access, tuple(self.me.position), tuple(self.other.position))
+            self.explore_target = min(unseen, key=lambda p: (self.state.last_seen(p) is not None,
+                                                             self.state.last_seen(p) or 0))
+        action = step_towards(self.floor, self.me.position, self.me.orientation, self.other.position,
+                              [self.explore_target])
+        return Action.STAY if action == Action.INTERACT else action
 
     def _choose(self, jobs: List[Job], t: int) -> Tuple[Optional[Job], str]:
         open_jobs = [j for j in jobs if self.cooldown.get(j.key, -1) <= t]
@@ -349,10 +389,11 @@ class SimulatedHuman:
         if not orders:
             return []
         out, keys = [], set()
-        for job in self._needs(orders[0], None, frozenset()):
-            if job.key not in keys:
-                keys.add(job.key)
-                out.append(job)
+        for i, order in enumerate(orders[:max(1, getattr(self.mdp, "num_open_orders", 1))]):
+            for job in self._needs(order, None, frozenset()):
+                if job.key not in keys:
+                    keys.add(job.key)
+                    out.append(replace(job, order=i) if i else job)
         if self.traits.avoid_stations:
             # Soft: a station kind is avoided only if the other player can use one of them.
             avoided = {k for k in self.traits.avoid_stations
@@ -453,7 +494,15 @@ class SimulatedHuman:
         kind, recipe = self.recipes[item]
         station, status = self._select_station(item)
         if station is None:
-            return self._free_station_jobs(kind)
+            # Every station for this product is in use. Free one if possible, and meanwhile
+            # prepare inputs that are made on other stations (bringing an input itself would
+            # leave it nowhere to go). Without this, two open orders can wait on each other's
+            # utensils forever.
+            out = self._free_station_jobs(kind)
+            for child in dict.fromkeys(recipe.elements()):
+                if child in self.recipes and not self._exists(child):
+                    out += self._needs(child, item, seen)
+            return out
         if status == "busy":
             if dest is None and self._need_dish(item):
                 return self._dish_job(item, station)
@@ -469,6 +518,30 @@ class SimulatedHuman:
                 out += self._needs(child, item, seen)
         return out
 
+    def _exists(self, item: str) -> bool:
+        """Is ``item`` anywhere: on a counter or utensil, being made, or in someone's hands?"""
+        if any(p.held_object is not None and p.held_object.name == item for p in (self.me, self.other)):
+            return True
+        for o in self.objects.values():
+            if o.name == item or (o.state is not None and o.state[0] == item):
+                return True
+        return False
+
+    def _needed_items(self) -> set:
+        """Every item in the recipe trees of the open orders."""
+        out: set = set()
+
+        def walk(item):
+            if item in out:
+                return
+            out.add(item)
+            if item in self.recipes:
+                for child in self.recipes[item][1]:
+                    walk(child)
+        for order in self.state.order_list[:max(1, getattr(self.mdp, "num_open_orders", 1))]:
+            walk(order)
+        return out
+
     def _free_station_jobs(self, kind: str) -> List[Job]:
         """Every station of ``kind`` is blocked: clear a wrong batch or unload finished food."""
         out = []
@@ -482,7 +555,9 @@ class SimulatedHuman:
                 if not any(not (contents - r) for r in recipes):
                     # Starting a batch that matches no recipe makes the environment discard it.
                     out.append(Job("clear", str(obj.state[0]), self._stage_of(kind), None, p))
-            elif obj.catagory == "finished":
+            elif obj.catagory == "finished" and obj.name not in self._needed_items():
+                # Only food no open order needs (with several open orders, food blocking
+                # this order's station may be another order's dish).
                 out.append(Job("unload", obj.name, self._stage_of(kind), None, p))
         return out
 
@@ -551,7 +626,14 @@ class SimulatedHuman:
             return self._go(serve) if serve else self._handoff()
         station, status = self._select_station(job.dest)
         if station is None or status != "open":
-            return Action.STAY          # nowhere to put it yet
+            # Nowhere to put it yet. After a few steps, set it down so the hands are free
+            # (two players waiting with full hands for one busy utensil would never plate).
+            self.held_wait += 1
+            if self.held_wait > HELD_WAIT and self._free_counters(shared=False):
+                self.cooldown[job.key] = self.state.timestep + HELD_WAIT
+                return self._go(self._free_counters(shared=False))
+            return Action.STAY
+        self.held_wait = 0
         return self._go([station]) if self._mine(station) else self._handoff()
 
     def _free_counters(self, shared: bool) -> List[Pos]:
@@ -565,11 +647,12 @@ class SimulatedHuman:
         """One primitive step towards facing the nearest target; INTERACT when facing it.
 
         If every target is cut off (the other player stands in the only way), step
-        out from in front of any station instead of freezing there.
+        out from in front of any station with probability 1/2 instead of freezing there.
         """
         action = step_towards(self.floor, self.me.position, self.me.orientation,
                               self.other.position, targets)
-        if action == Action.STAY and targets:
+        if action == Action.STAY and targets and self.unstick.rng.random() < 0.5:
+            # Random, so two players cutting each other off do not step aside (and back) in step.
             return step_aside(self.floor, self.access, tuple(self.me.position), tuple(self.other.position))
         return action
 

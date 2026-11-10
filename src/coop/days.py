@@ -67,7 +67,7 @@ REFERENCE = "_reference"
 CONFIG_KEYS = {
     "name", "layout", "menu", "horizon", "wrong_delivery_penalty", "no_repeat", "days",
     "episodes_per_day", "ego_index", "personas", "custom_personas", "run_seeds", "agent",
-    "conditions", "reference_agent",
+    "conditions", "reference_agent", "open_orders", "view_radius",
 }
 
 
@@ -84,6 +84,8 @@ class DaysConfig:
     days: int = 5
     episodes_per_day: int = 3
     ego_index: int = 0                  # player slot of the ego; the partner takes the other
+    open_orders: int = 1                # orders open at once (any of them may be served)
+    view_radius: Optional[int] = None   # partial view for every player (None = full view)
     personas: List[str] = field(default_factory=lambda: ["steady"])
     custom_personas: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     run_seeds: List[int] = field(default_factory=lambda: [0])
@@ -99,6 +101,10 @@ class DaysConfig:
             raise ValueError("days, episodes_per_day and horizon must be >= 1")
         if self.ego_index not in (0, 1):
             raise ValueError("ego_index must be 0 or 1")
+        if self.open_orders < 1:
+            raise ValueError("open_orders must be >= 1")
+        if self.view_radius is not None and self.view_radius < 0:
+            raise ValueError("view_radius must be >= 0 (or null for a full view)")
         if not self.personas or len(set(self.personas)) != len(self.personas):
             raise ValueError(f"personas must be a non-empty list of distinct names: {self.personas}")
         if not self.run_seeds or len(set(self.run_seeds)) != len(self.run_seeds):
@@ -229,14 +235,16 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     seed = episode_seed(run_seed, day, episode)
     ego, other = cfg.ego_index, 1 - cfg.ego_index
     env = ContinuousOrderEnv(cfg.menu, layout=cfg.layout, horizon=cfg.horizon,
-                             wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat)
+                             wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat,
+                             open_orders=cfg.open_orders)
     env.reset(seed)
     traits = persona_traits(persona, cfg.custom_personas)
     partner = SimulatedHuman(traits, persona)
-    partner.reset(env.mdp, other, seed)
+    partner.reset(env.mdp, other, seed, view_radius=cfg.view_radius)    # same view rules for everyone
     context = {"day": day, "episode": episode, "episode_seed": seed, "layout": cfg.layout,
                "horizon": cfg.horizon, "menu": normalize_menu(cfg.menu), "index": ego,
-               "partner_index": other, "wrong_delivery_penalty": cfg.wrong_delivery_penalty}
+               "partner_index": other, "wrong_delivery_penalty": cfg.wrong_delivery_penalty,
+               "open_orders": cfg.open_orders, "view_radius": cfg.view_radius}
     agent.begin_episode(env.mdp, ego, context)
     ep_dir.mkdir(parents=True, exist_ok=True)
     with open(ep_dir / "steps.jsonl", "w") as steps:
@@ -575,12 +583,15 @@ def main(argv=None):
     ap.add_argument("--episodes-per-day", type=int)
     ap.add_argument("--horizon", type=int)
     ap.add_argument("--layout", help="layout file name: new_env (split), open_env, open2_env (open kitchens)")
+    ap.add_argument("--open-orders", type=int, help="orders open at once")
+    ap.add_argument("--view-radius", type=int, help="partial view for every player")
     ap.add_argument("--allow-code-change", action="store_true",
                     help="resume even though the episode-playing code changed since the run started")
     args = ap.parse_args(argv)
     cfg = load_config(args.config, conditions=args.conditions, personas=args.personas,
                       run_seeds=args.run_seeds, days=args.days, episodes_per_day=args.episodes_per_day,
-                      horizon=args.horizon, layout=args.layout)
+                      horizon=args.horizon, layout=args.layout, open_orders=args.open_orders,
+                      view_radius=args.view_radius)
     results = run_all(cfg, args.out, args.workers, log=lambda s: print(s, file=sys.stderr, flush=True),
                       allow_code_change=args.allow_code_change)
     failed = [r for r in results["runs"] if r["status"] != "ok"]

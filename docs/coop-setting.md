@@ -142,6 +142,42 @@ second set of utensils helps only within an order); `prep_first` 67–70% prep,
 `flaky` 9–11.5 abandoned jobs. Orders keep being completed to the end of every
 episode (no stalls).
 
+## Several open orders and partial view
+
+Both are settings of `coop.days` (config keys `open_orders`, `view_radius`, or
+`--open-orders`, `--view-radius`), of `coop.screen` and of `coop.voi`. They
+apply to every player alike: the LLM ego, the simulated partner and the
+scripted egos.
+
+- **`open_orders: k`** (default 1): k orders are open at once; delivering any of
+  them closes it and opens the next order of the sequence. The MDP gets an
+  optional `num_open_orders` (default 1, the original rule).
+- **`view_radius: r`** (default: full view): a player sees cells within r steps
+  (Chebyshev, as OvercookedV2's `agent_view_size`). For other cells it remembers
+  what it saw and when (`coop.view.Belief`). A batch seen cooking is assumed to
+  finish by the known cook time (public rules). The partner is seen only in
+  view (otherwise: last place and item seen). Its actions are known only when
+  seen, and so is who made a delivery (the score is public). Orders and the map
+  stay public. The LLM ego is told this, and its prompt marks out-of-view
+  utensils and counters "last seen at t=...". Scripted players with nothing to
+  do walk to the station they saw longest ago.
+
+Movement and planning fixes that several orders and partial views needed
+(partner and LLM executor alike):
+- when cut off, step aside with probability ½;
+- on A→B→A→B shuttling, stay with probability ½;
+- set down a held item after waiting 5 steps with nowhere to put it;
+- keep preparing inputs on free stations while an order's final station is
+  busy;
+- never take out food that another open order needs.
+
+These change open-map results of every persona slightly (e.g. steady 260 → 280
+on the pinned `open_env` seed); `new_env` is unchanged.
+
+Scripted pairs (300 steps, 4 seeds) have no stalls on `open_env` / `open2_env`
+with 1–3 open orders, or with radius 3. Radius 2 still stalls a few
+`open_env` episodes; `open2_env` is fine.
+
 ### Is knowing the partner worth anything? (`coop.voi`)
 
 ```bash
@@ -153,8 +189,19 @@ serve first, each with or without giving way). `value` = score of the best ego
 for this persona − score of the ego that is best on average. That is what
 knowing the partner buys with these policies (a lower bound).
 
-Result (8 seeds, 300 steps): `value` is at most +7.5 points (less than half an
-order) for every persona on all three maps, and 0 for most. With one order open
+The best policies are chosen on `--seeds` (0–7) and re-measured on
+`--eval-seeds` (8–15). Picking the best of 16 policies on the same episodes
+overstates the gain, so trust the re-measured value.
+
+Result, one open order, full view (8 seeds, 300 steps): `value` is at most +7.5
+points (less than half an order) for every persona on all three maps, and 0 for
+most.
+
+With several open orders and/or a partial view (7 default personas, re-measured
+on new seeds): almost every gain seen on the selection seeds disappears or
+reverses. The one consistent case is a `slow` partner on `open2_env` with 2 open
+orders and radius 2 (+22.5 on the selection seeds, +40 on new seeds). Everything
+else is within about ±10, with occasional large negatives (noise of 8 seeds). With one order open
 at a time and a full view of the kitchen, doing whatever the order needs next is
 already close to the best response to every partner. A slow partner just means
 doing more; an avoided station means doing that step yourself. So, as the
@@ -421,8 +468,8 @@ lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python 
 
 ## Not built yet
 
-Partial observability (view radius), the order-display tile, and an
-LLM-simulated human partner.
+An order-display tile (orders are public everywhere), and an LLM-simulated
+human partner.
 
 ## Other environment changes
 

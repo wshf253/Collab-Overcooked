@@ -19,10 +19,13 @@ def run(persona, layout="open_env", seed=0, horizon=300):
 
 
 class OriginalTypesUnchangedTests(unittest.TestCase):
-    # Scores and event counts recorded with the code before the new traits (commit 656126f).
-    SNAPSHOT = {("open_env", "steady"): (260.0, 0), ("open_env", "prep_first"): (220.0, 0),
+    # Scores and event counts of the original personas. new_env: unchanged since before the new
+    # traits (commit 656126f). open_env: steady 260 -> 280 and flaky 220 -> 200 when the
+    # movement fixes for open kitchens came in (random step-aside when cut off, give-way on
+    # A-B-A shuttling); the new traits themselves draw no randomness for these personas.
+    SNAPSHOT = {("open_env", "steady"): (280.0, 0), ("open_env", "prep_first"): (220.0, 0),
                 ("open_env", "slow"): (220.0, 0), ("open_env", "sloppy"): (260.0, 1),
-                ("open_env", "flaky"): (220.0, 12), ("new_env", "steady"): (260.0, 0),
+                ("open_env", "flaky"): (200.0, 12), ("new_env", "steady"): (260.0, 0),
                 ("new_env", "prep_first"): (220.0, 0), ("new_env", "slow"): (160.0, 0),
                 ("new_env", "sloppy"): (260.0, 0), ("new_env", "flaky"): (200.0, 5)}
 

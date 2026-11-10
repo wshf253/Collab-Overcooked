@@ -120,24 +120,32 @@ class Unstick:
     """Random give-way after a blocked move (seeded, so runs stay reproducible).
 
     Two players that follow deterministic rules can step into the same cell at
-    the same time forever (the env bounces both back). After a move that should
-    have changed the position but did not, the player gives way with probability
-    1/2: it steps to a random free neighbouring cell or stays this step.
-    Turning on the spot (moving towards a station) is not a blocked move.
+    the same time forever (the env bounces both back), or dodge each other the same
+    way forever (A -> B -> A -> B). After a move that should have changed the
+    position but did not, the player gives way with probability 1/2 (a random free
+    neighbouring cell, or staying); when about to repeat A -> B -> A -> B, it stays
+    with probability 1/2. Turning on the spot (towards a station) is not a blocked move.
     """
 
     def __init__(self, rng):
         self.rng = rng
         self.prev: Optional[Tuple[Pos, bool]] = None    # (position, tried to move onto floor)
+        self.history: List[Pos] = []                     # recent positions, oldest first
         self.give_ways = 0
 
     def filter(self, floor: Set[Pos], position: Pos, action, blocked: Optional[Pos]):
         stuck = self.prev is not None and self.prev[1] and self.prev[0] == position
-        if stuck and action in DIRECTIONS and self.rng.random() < 0.5:
+        nxt = (position[0] + action[0], position[1] + action[1]) if action in DIRECTIONS else None
+        # A -> B -> A -> B: two players dodging each other in step (both detour the same way).
+        shuttle = (nxt is not None and len(self.history) >= 2 and self.history[-2] == position
+                   and self.history[-1] == nxt)
+        if (stuck or shuttle) and action in DIRECTIONS and self.rng.random() < 0.5:
             free = [d for d in DIRECTIONS if (position[0] + d[0], position[1] + d[1]) in floor
                     and (position[0] + d[0], position[1] + d[1]) != blocked]
-            action = self.rng.choice(free + [Action.STAY])
+            action = Action.STAY if shuttle else self.rng.choice(free + [Action.STAY])
             self.give_ways += 1
         moves = action in DIRECTIONS and (position[0] + action[0], position[1] + action[1]) in floor
         self.prev = (position, moves)
+        if not self.history or self.history[-1] != position:
+            self.history = (self.history + [position])[-3:]
         return action

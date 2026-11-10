@@ -8,7 +8,9 @@ episodes:
 * ``best response``: the ego policy with the highest score for this persona.
 
 ``value = best response - best fixed`` (points per episode) is what knowing the
-partner could buy with these simple policies. A partner type whose value is
+partner could buy with these simple policies. Both are chosen on ``--seeds`` and
+re-measured on ``--eval-seeds`` (picking the best of many policies on the same
+episodes overstates the gain). A partner type whose value is
 about 0 cannot reward ToM or memory, whatever the agent infers. It is a lower
 bound: a cleverer policy could gain more. Same idea as the information-gap
 screen of ICRL4AHT RQ3.
@@ -27,16 +29,26 @@ from typing import Dict, List, Tuple
 from .partner import DEFAULT_PERSONAS, PERSONAS, Traits
 from .screen import DEFAULT_MENU, simulate
 
-# Ego policies: no preference or one preferred stage, with or without giving way on tasks.
+# Ego policies: no preference or one preferred stage, with or without giving way on tasks,
+# and (with several open orders) working on the oldest or the newest order first.
 EGOS: Dict[str, Traits] = {}
 for _pref in ((), ("prep",), ("cook",), ("serve",)):
     for _yield in (False, True):
-        _name = ("any" if not _pref else _pref[0] + "_first") + ("+yield" if _yield else "")
-        EGOS[_name] = Traits(preference=_pref, yield_tasks=_yield)
+        for _focus in ("first", "last"):
+            _name = (("any" if not _pref else _pref[0] + "_first") + ("+yield" if _yield else "")
+                     + ("+newest" if _focus == "last" else ""))
+            EGOS[_name] = Traits(preference=_pref, yield_tasks=_yield, order_focus=_focus)
+
+
+def egos_for(open_orders: int) -> Dict[str, Traits]:
+    """Order focus only matters with several open orders."""
+    return EGOS if open_orders > 1 else {k: v for k, v in EGOS.items() if not k.endswith("+newest")}
 
 
 def screen(layout: str, personas: List[str], seeds: List[int], horizon: int, menu: List[str],
-           egos: Dict[str, Traits] = EGOS, ego_index: int = 0) -> Dict:
+           egos: Dict[str, Traits] = None, ego_index: int = 0, view_radius=None, open_orders: int = 1,
+           eval_seeds: List[int] = None) -> Dict:
+    egos = egos or egos_for(open_orders)
     partner_index = 1 - ego_index
     scores: Dict[str, Dict[str, float]] = {}       # persona -> ego -> mean score
     for persona in personas:
@@ -45,7 +57,8 @@ def screen(layout: str, personas: List[str], seeds: List[int], horizon: int, men
             vals = []
             for seed in seeds:
                 env, _ = simulate(menu, layout, horizon, seed, persona, partner_index,
-                                  teammate=(f"ego_{ego}", traits))
+                                  teammate=(f"ego_{ego}", traits), view_radius=view_radius,
+                                  open_orders=open_orders)
                 vals.append(env.summary()["score"])
             scores[persona][ego] = statistics.fmean(vals)
     overall = {ego: statistics.fmean(scores[p][ego] for p in personas) for ego in egos}
@@ -57,8 +70,24 @@ def screen(layout: str, personas: List[str], seeds: List[int], horizon: int, men
                          "best_fixed_score": scores[persona][best_fixed],
                          "value": scores[persona][br] - scores[persona][best_fixed],
                          "scores": scores[persona]}
-    return {"layout": layout, "seeds": seeds, "horizon": horizon, "best_fixed": best_fixed,
-            "best_fixed_overall": overall[best_fixed], "overall": overall, "personas": rows}
+    out = {"layout": layout, "seeds": seeds, "horizon": horizon, "view_radius": view_radius,
+           "open_orders": open_orders, "best_fixed": best_fixed,
+           "best_fixed_overall": overall[best_fixed], "overall": overall, "personas": rows}
+    if eval_seeds:
+        # Picking the best of many policies on the same episodes overstates the value
+        # (winner's curse): measure the chosen policies again on new seeds.
+        for persona in personas:
+            r = rows[persona]
+            per = {}
+            for ego in {r["best_response"], best_fixed}:
+                per[ego] = statistics.fmean(
+                    simulate(menu, layout, horizon, sd, persona, partner_index, teammate=(f"ego_{ego}", egos[ego]),
+                             view_radius=view_radius, open_orders=open_orders)[0].summary()["score"]
+                    for sd in eval_seeds)
+            r["eval_value"] = per[r["best_response"]] - per[best_fixed]
+            r["eval_scores"] = per
+        out["eval_seeds"] = eval_seeds
+    return out
 
 
 def main(argv=None):
@@ -69,17 +98,27 @@ def main(argv=None):
     ap.add_argument("--seeds", nargs="+", type=int, default=list(range(8)))
     ap.add_argument("--horizon", type=int, default=300)
     ap.add_argument("--menu", nargs="+", default=DEFAULT_MENU)
+    ap.add_argument("--view-radius", type=int, default=None, help="partial view for both players")
+    ap.add_argument("--open-orders", type=int, default=1, help="orders open at once")
+    ap.add_argument("--eval-seeds", nargs="+", type=int, default=list(range(8, 16)),
+                    help="new seeds to re-measure the chosen policies on (empty: skip)")
     ap.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
     started = time.time()
-    res = screen(args.layout, args.personas, args.seeds, args.horizon, args.menu)
-    print(f"layout {args.layout}, horizon {args.horizon}, seeds {args.seeds}; ego in slot 0")
+    res = screen(args.layout, args.personas, args.seeds, args.horizon, args.menu,
+                 view_radius=args.view_radius, open_orders=args.open_orders, eval_seeds=args.eval_seeds)
+    print(f"layout {args.layout}, horizon {args.horizon}, seeds {args.seeds}, view radius {args.view_radius}, "
+          f"open orders {args.open_orders}; ego in slot 0")
     print(f"best fixed ego (without knowing the partner): {res['best_fixed']} "
           f"(mean {res['best_fixed_overall']:.1f} over personas)")
-    print(f"{'persona':<18}{'best fixed':>11}{'best response':>28}{'value':>8}")
+    print(f"{'persona':<18}{'best fixed':>11}{'best response':>36}{'value':>8}{'on new seeds':>14}")
     for p, r in res["personas"].items():
-        print(f"{p:<18}{r['best_fixed_score']:>11.1f}{r['best_response'] + ' ' + format(r['best_response_score'], '.1f'):>28}"
-              f"{r['value']:>+8.1f}")
+        ev = f"{r['eval_value']:>+14.1f}" if "eval_value" in r else ""
+        print(f"{p:<18}{r['best_fixed_score']:>11.1f}{r['best_response'] + ' ' + format(r['best_response_score'], '.1f'):>36}"
+              f"{r['value']:>+8.1f}{ev}")
+    if res.get("eval_seeds"):
+        print("value: on the seeds the policies were chosen with (optimistic); "
+              "on new seeds: the same chosen policies re-measured (the number to trust)")
     print(f"({time.time() - started:.0f}s)")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

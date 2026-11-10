@@ -4,8 +4,9 @@ An episode keeps issuing orders until the horizon ends:
 
 * The order sequence is drawn up front from the episode seed (``coop.orders``),
   so every condition with the same seed sees the same orders.
-* Exactly one order is open at a time. A correct delivery earns the layout's
-  ``delivery_reward`` and opens the next order in the sequence.
+* ``open_orders`` orders are open at a time (default 1). Delivering any open order
+  earns the layout's ``delivery_reward``, closes it and opens the next order of the
+  sequence.
 * A wrong delivery (wrong item, or a plated/unplated mismatch) costs
   ``wrong_delivery_penalty`` points; the item is consumed and the order stays open.
 * Interactions the legacy MDP cannot handle safely (e.g. adding an ingredient to
@@ -105,6 +106,7 @@ class ContinuousOrderEnv:
             and every order needs several steps of preparation).
         no_repeat: never issue the same order twice in a row.
         sanitize: turn unsafe interactions into "stay" (see module docstring).
+        open_orders: how many orders are open at once (any of them may be served).
     """
 
     def __init__(
@@ -116,7 +118,10 @@ class ContinuousOrderEnv:
         max_orders: Optional[int] = None,
         no_repeat: bool = False,
         sanitize: bool = True,
+        open_orders: int = 1,
     ):
+        if open_orders < 1:
+            raise ValueError("open_orders must be >= 1")
         if horizon < 1:
             raise ValueError("horizon must be >= 1")
         if wrong_delivery_penalty < 0:
@@ -135,6 +140,9 @@ class ContinuousOrderEnv:
         self.mdp.one_task_mode = False
         self.mdp.order_probability = {}
         self.mdp.wrong_delivery_penalty = wrong_delivery_penalty
+        self.open_orders = open_orders
+        self.mdp.num_open_orders = open_orders
+        self.max_orders = max(self.max_orders, open_orders)
         self.delivery_reward = self.mdp.delivery_reward
         self.wrong_delivery_penalty = wrong_delivery_penalty
         self.env: Optional[OvercookedEnv] = None
@@ -154,7 +162,10 @@ class ContinuousOrderEnv:
         # Each episode owns its order list; the MDP's template is never mutated.
         self.env.state.order_list = list(sequence)
         self.log = EpisodeLog(seed=seed, order_sequence=list(sequence))
-        self.log.orders.append(OrderRecord(index=0, name=sequence[0], issued_t=0))
+        self.open_records = [OrderRecord(index=i, name=sequence[i], issued_t=0)
+                             for i in range(min(self.open_orders, len(sequence)))]
+        self.log.orders.extend(self.open_records)
+        self.next_index = len(self.open_records)
         self.score = 0.0
         return self.env.state
 
@@ -200,33 +211,41 @@ class ContinuousOrderEnv:
         plated = obj.catagory == "with_dish"
         return plated == (name in self.mdp.Recipe.recipe_need_dish)
 
-    def _resolve_deliveries(self, t, state, held, open_orders) -> List[Delivery]:
-        # The MDP resolves interacts in player-index order, so a correct delivery
-        # by player 0 opens the next order before player 1's item is checked.
+    def _resolve_deliveries(self, t, state, held, order_list_before) -> List[Delivery]:
+        # Same rule as the MDP: interacts resolve in player-index order; a delivery
+        # closes the first open order it matches, and the next order of the sequence opens.
         out: List[Delivery] = []
-        k = 0
+        window = list(self.open_records)
         for i, action in enumerate(state.ml_actions):
             if action != DELIVER_ACTION:
                 continue
             obj = held[i]
-            if obj is None or k >= len(open_orders):
+            if obj is None or not window:
                 raise RuntimeError(f"Inconsistent delivery by agent {i} at t={t}")
-            order = open_orders[k]
-            correct = self._is_correct(obj, order)
+            match = next((j for j, r in enumerate(window) if self._is_correct(obj, r.name)), None)
             item = obj.state[0] if obj.state is not None else obj.name
+            names = [r.name for r in window]
+            if match is not None:
+                rec = window.pop(match)
+                rec.completed_t, rec.delivered_by = t, i
+                order = rec.name
+                if self.next_index < len(self.log.order_sequence):
+                    new = OrderRecord(index=self.next_index, name=self.log.order_sequence[self.next_index],
+                                      issued_t=t + 1)
+                    self.next_index += 1
+                    window.append(new)
+                    self.log.orders.append(new)
+            else:
+                window[0].wrong_deliveries += 1
+                order = ", ".join(names)
             d = Delivery(t=t, agent=i, item=str(item), plated=obj.catagory == "with_dish",
-                         order=order, correct=correct)
+                         order=order, correct=match is not None)
             out.append(d)
             self.log.deliveries.append(d)
-            current = self.log.orders[-1]
-            if correct:
-                current.completed_t, current.delivered_by = t, i
-                k += 1
-                if k < len(open_orders):
-                    self.log.orders.append(OrderRecord(index=current.index + 1,
-                                                       name=open_orders[k], issued_t=t + 1))
-            else:
-                current.wrong_deliveries += 1
+        self.open_records = window
+        if [r.name for r in window] != list(state.order_list[:self.open_orders]):
+            raise RuntimeError(f"Open orders disagree with the MDP at t={t}: "
+                               f"{[r.name for r in window]} vs {state.order_list[:self.open_orders]}")
         return out
 
     def _check_consistency(self, reward, deliveries, open_orders, state):
@@ -259,6 +278,10 @@ class ContinuousOrderEnv:
         orders = self.env.state.order_list
         return orders[0] if orders else None
 
+    @property
+    def open_order_names(self) -> List[str]:
+        return list(self.env.state.order_list[:self.open_orders])
+
     def upcoming_orders(self, k: int) -> List[str]:
         """The open order followed by the next ``k - 1`` orders of the sequence."""
         return list(self.env.state.order_list[:k])
@@ -271,6 +294,7 @@ class ContinuousOrderEnv:
             "seed": log.seed,
             "layout": self.layout,
             "horizon": self.horizon,
+            "open_orders": self.open_orders,
             "steps": self.env.t,
             "score": self.score,
             "orders_completed": len(completed),

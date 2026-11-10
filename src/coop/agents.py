@@ -70,7 +70,7 @@ class ScriptedAgent(Agent):
 
     def begin_episode(self, mdp, index, context):
         self.player = SimulatedHuman.persona(self.persona)
-        self.player.reset(mdp, index, context["episode_seed"])
+        self.player.reset(mdp, index, context["episode_seed"], view_radius=context.get("view_radius"))
 
     def act(self, state, t):
         return self.player.act(state, t)

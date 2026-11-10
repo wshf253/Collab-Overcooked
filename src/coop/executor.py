@@ -226,8 +226,9 @@ class Executor:
             return self.unstick.filter(self.k.floor, tuple(me.position), aside, other), None
         targets, parm = self._targets(m, state)
         action = step_towards(self.k.floor, tuple(me.position), me.orientation, other, targets)
-        if action == Action.STAY and targets:
-            # Cut off by the partner: step out from in front of any station instead of freezing.
+        if action == Action.STAY and targets and self.unstick.rng.random() < 0.5:
+            # Cut off by the partner: step out from in front of any station (at random, so the
+            # two players do not step aside and back in step).
             action = step_aside(self.k.floor, self.access, tuple(me.position), other)
         action = self.unstick.filter(self.k.floor, tuple(me.position), action, other)
         if action == Action.INTERACT:
