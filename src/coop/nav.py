@@ -91,6 +91,27 @@ def step_aside(floor: Set[Pos], access: Set[Pos], position: Pos, blocked: Option
     return Action.STAY
 
 
+def steps_to_face(floor: Set[Pos], start: Pos, targets: Iterable[Pos]) -> Optional[int]:
+    """Moves from ``start`` until standing next to any target (0 if already there), or None."""
+    targets = list(targets)
+    if not targets:
+        return None
+    goal = {(t[0] + dx, t[1] + dy) for t in targets for dx, dy in DIRECTIONS} & floor
+    if not goal:
+        return None
+    queue, seen = deque([(start, 0)]), {start}
+    while queue:
+        pos, d = queue.popleft()
+        if pos in goal:
+            return d
+        for dx, dy in DIRECTIONS:
+            p = (pos[0] + dx, pos[1] + dy)
+            if p in floor and p not in seen:
+                seen.add(p)
+                queue.append((p, d + 1))
+    return None
+
+
 def facing(position: Pos, orientation) -> Pos:
     return (position[0] + orientation[0], position[1] + orientation[1])
 

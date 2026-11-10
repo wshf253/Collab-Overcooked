@@ -24,6 +24,14 @@ DEFAULT_MENU = ["boiled_egg", "boiled_mushroom", "boiled_corn_slices",
                 "baked_carrot_soup", "sliced_eggplant_and_chickpea_stew"]
 
 
+def _player(spec) -> SimulatedHuman:
+    """A persona name, or (name, Traits) for a player that is not in PERSONAS."""
+    if isinstance(spec, str):
+        return SimulatedHuman.persona(spec)
+    name, traits = spec
+    return SimulatedHuman(traits, name)
+
+
 def simulate(menu, layout, horizon, seed, persona, partner_index, penalty=20,
              teammate="steady") -> Tuple[ContinuousOrderEnv, List[SimulatedHuman]]:
     """One episode: ``persona`` in slot ``partner_index``, ``teammate`` in the other slot."""
@@ -31,8 +39,8 @@ def simulate(menu, layout, horizon, seed, persona, partner_index, penalty=20,
     with contextlib.redirect_stdout(io.StringIO()):   # the legacy MDP prints every step
         env.reset(seed)
     players: List[SimulatedHuman] = [None, None]
-    players[partner_index] = SimulatedHuman.persona(persona)
-    players[1 - partner_index] = SimulatedHuman.persona(teammate)
+    players[partner_index] = _player(persona)
+    players[1 - partner_index] = _player(teammate)
     for i, p in enumerate(players):
         p.reset(env.mdp, i, seed)
     while not env.done:
@@ -66,6 +74,8 @@ def aggregate(runs: List[Dict]) -> Dict:
         "steps_per_order": mean([r["env"]["mean_order_steps"] for r in runs]),
         "partner_slips": mean([r["partner"]["slips"] for r in runs]),
         "partner_abandons": mean([r["partner"]["abandons"] for r in runs]),
+        "partner_yields": mean([r["partner"].get("yields", 0) for r in runs]),
+        "partner_left_unfinished": mean([r["partner"].get("left_unfinished", 0) for r in runs]),
         "partner_status": share("status_share"),
         "partner_stage_when_acting": share("stage_share_when_acting"),
     }
@@ -93,16 +103,17 @@ def main(argv=None):
             sg = agg["partner_stage_when_acting"]
             table.append((index, persona, agg["score"], agg["orders"], agg["wrong_deliveries"],
                           agg["steps_per_order"], st.get("act", 0), sg.get("prep", 0), sg.get("cook", 0),
-                          sg.get("serve", 0), agg["partner_slips"], agg["partner_abandons"], agg["rejected"]))
+                          sg.get("serve", 0), agg["partner_slips"], agg["partner_abandons"],
+                          agg["partner_yields"], agg["partner_left_unfinished"], agg["rejected"]))
 
     print(f"layout {args.layout}, horizon {args.horizon}, seeds {args.seeds}, menu {args.menu}")
     print("p = player slot of the simulated partner (the other slot is 'steady'); means over seeds")
     head = ("p", "persona", "score", "orders", "wrong", "steps/ord", "act%", "prep%", "cook%", "serve%",
-            "slips", "abandons", "rejected")
-    print("{:>2} {:<12} {:>6} {:>6} {:>5} {:>9} {:>5} {:>5} {:>5} {:>6} {:>5} {:>8} {:>8}".format(*head))
+            "slips", "abandons", "yields", "unfin", "rejected")
+    print("{:>2} {:<17} {:>6} {:>6} {:>5} {:>9} {:>5} {:>5} {:>5} {:>6} {:>5} {:>8} {:>6} {:>5} {:>8}".format(*head))
     for r in table:
-        print("{:>2} {:<12} {:>6.1f} {:>6.2f} {:>5.2f} {:>9.1f} {:>5.0%} {:>5.0%} {:>5.0%} {:>6.0%} {:>5.2f} {:>8.2f} {:>8.2f}"
-              .format(*[x if x is not None else float("nan") for x in r]))
+        print("{:>2} {:<17} {:>6.1f} {:>6.2f} {:>5.2f} {:>9.1f} {:>5.0%} {:>5.0%} {:>5.0%} {:>6.0%} {:>5.2f} {:>8.2f}"
+              " {:>6.2f} {:>5.2f} {:>8.2f}".format(*[x if x is not None else float("nan") for x in r]))
     print(f"({time.time() - started:.0f}s)")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

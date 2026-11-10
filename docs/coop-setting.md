@@ -65,8 +65,23 @@ Behaviour is set by `Traits`:
 | reliability | `slip_rate` | a raw-ingredient job may take a wrong ingredient into the utensil; starting the spoiled batch makes the env discard it |
 | commitment | `abandon_rate`, `abandon_cooldown` | may drop its current job, leaving any held item on a counter, and won't take that job again for a while |
 
-Starting personas (`coop.partner.PERSONAS`), each changing one trait from
-`steady`: `prep_first`, `serve_first`, `slow`, `sloppy`, `flaky`.
+Personas (`coop.partner.PERSONAS`), each changing one trait from `steady`, all
+stable (the same traits every day):
+
+| persona | trait |
+|---|---|
+| `steady` | none |
+| `prep_first`, `serve_first` | prefers a stage; waits up to 8 steps for one before doing other work |
+| `slow` | acts every second step, pauses 2 steps before each job |
+| `yielding` | gives way on tasks: if the other player is heading for the same job (facing it, or closer and getting closer), it picks another |
+| `avoids_board` | never uses the chopping board when the other player can reach one (on `new_env` only the partner can, so it still cuts there) |
+| `leaves_unfinished` | half the time walks away from starting a loaded utensil or from taking finished food out, and leaves it for 15 steps |
+| `sloppy`, `flaky` | slips / abandons jobs; kept for later tests, not in the default lists (their traits were hard to see or looked like hand-overs) |
+
+`coop.partner.DEFAULT_PERSONAS` (used by the configs) is the first seven. The
+probe asks about six fields: `prefers`, `avoids`, `gives_way`, `speed`,
+`reliability`, `commitment`. `yielding` and `avoids_board` only differ from
+`steady` on the open kitchens.
 
 The partner logs its true job and status every step (`trace`), and slips and
 abandoned jobs as events (`events`). This is ground truth for evaluation, never
@@ -126,6 +141,28 @@ second set of utensils helps only within an order); `prep_first` 67–70% prep,
 `serve_first` 66% serving, `slow` active 12–14%, `sloppy` 1.1–2.5 slips,
 `flaky` 9–11.5 abandoned jobs. Orders keep being completed to the end of every
 episode (no stalls).
+
+### Is knowing the partner worth anything? (`coop.voi`)
+
+```bash
+PYTHONPATH=src:lib/overcooked_ai python -m coop.voi --layout open_env --out outputs/voi_open.json
+```
+
+Plays every persona with 8 scripted ego policies (no preference or prep / cook /
+serve first, each with or without giving way). `value` = score of the best ego
+for this persona − score of the ego that is best on average. That is what
+knowing the partner buys with these policies (a lower bound).
+
+Result (8 seeds, 300 steps): `value` is at most +7.5 points (less than half an
+order) for every persona on all three maps, and 0 for most. With one order open
+at a time and a full view of the kitchen, doing whatever the order needs next is
+already close to the best response to every partner. A slow partner just means
+doing more; an avoided station means doing that step yourself. So, as the
+setting stands, ToM or memory cannot raise the score by knowing the partner,
+only by fixing the agent's own play. Settings where knowing the partner should
+pay: hidden information (partial observability, where the agent must predict what
+it cannot see), several orders open at once (choosing complementary work early),
+and costly commitments (long walks, contested stations).
 
 ## Days (`coop.days`)
 

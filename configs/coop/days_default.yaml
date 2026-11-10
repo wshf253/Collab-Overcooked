@@ -1,4 +1,4 @@
-# Default multi-day design: every persona for 5 days x 3 episodes, 3 run seeds.
+# Default multi-day design: 7 personas for 5 days x 3 episodes, 3 run seeds.
 # Each (persona, run seed) is one run: the same partner every day, and the ego's
 # memory carried over. Orders for (run seed, day, episode) are the same for all personas.
 name: days_default
@@ -15,7 +15,8 @@ no_repeat: false
 days: 5
 episodes_per_day: 3
 ego_index: 0
-personas: [steady, prep_first, serve_first, slow, sloppy, flaky]
+personas: [steady, prep_first, serve_first, slow, yielding, avoids_board, leaves_unfinished]
+# also defined, for later tests: sloppy, flaky
 run_seeds: [0, 1, 2]
 agent: {type: scripted, persona: steady}
 # custom_personas:      # define more partner types with any Traits fields, e.g.

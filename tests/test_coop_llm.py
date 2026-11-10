@@ -243,11 +243,12 @@ class LLMAgentTests(unittest.TestCase):
 
     def test_probe_is_scored_against_the_true_persona(self):
         probe = self.ep("direct", 1, 1, "summary.json")["probe"]
-        self.assertEqual(probe["truth"], {"prefers": "no clear preference", "speed": "normal",
+        self.assertEqual(probe["truth"], {"prefers": "no clear preference", "avoids": "nothing",
+                                          "gives_way": "does not give way", "speed": "normal",
                                           "reliability": "reliable", "commitment": "abandons tasks"})
         self.assertFalse(probe["correct"]["commitment"])     # the mock always says "finishes tasks"
-        self.assertEqual(probe["accuracy"], 0.75)
-        self.assertEqual(self.res["table"]["direct"]["flaky"]["1"]["probe_accuracy"], 0.75)
+        self.assertAlmostEqual(probe["accuracy"], 5 / 6)
+        self.assertAlmostEqual(self.res["table"]["direct"]["flaky"]["1"]["probe_accuracy"], 5 / 6)
 
 
 class FakeBackend:
@@ -284,8 +285,8 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(agent.fallbacks, len(agent.decisions))
         self.assertTrue(all(d["chosen"] == "wait(1)" for d in agent.decisions))
         # Invalid profile values are dropped instead of guessed.
-        self.assertEqual(summary["probe"]["answer"], {"prefers": "prep", "speed": None,
-                                                      "reliability": None, "commitment": None})
+        self.assertEqual(summary["probe"]["answer"], {"prefers": "prep", "avoids": None, "gives_way": None,
+                                                      "speed": None, "reliability": None, "commitment": None})
 
 
 class OpenAIBackendTests(unittest.TestCase):

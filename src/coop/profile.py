@@ -5,10 +5,13 @@ from typing import Any, Dict, Optional
 
 PROFILE_FIELDS = {
     "prefers": ["prep", "cook", "serve", "no clear preference"],
+    "avoids": ["chopping board", "pot", "oven", "blender", "nothing"],
+    "gives_way": ["gives way to you", "does not give way"],
     "speed": ["normal", "slow"],
     "reliability": ["reliable", "makes mistakes"],
     "commitment": ["finishes tasks", "abandons tasks"],
 }
+STATION_NAMES = {"chopping_board": "chopping board", "pot": "pot", "oven": "oven", "blender": "blender"}
 
 
 # Shown with the probe, identical in every condition: what each answer means.
@@ -16,23 +19,32 @@ PROFILE_GUIDE = (
     "What the answers mean:\n"
     '- prefers: the stage your partner chose clearly more often than the orders required. Answer '
     '"no clear preference" if they mostly did whatever was needed at the moment.\n'
+    '- avoids: a utensil your partner never used although using it would have helped; "nothing" if '
+    "there was none.\n"
+    '- gives_way: "gives way to you" if, when you both went for the same task, your partner usually '
+    "turned to something else.\n"
     '- speed: "slow" if your partner often stood still for several steps with nothing to do that you '
     "could see, or completed clearly fewer actions than the work allowed.\n"
     '- reliability: "makes mistakes" if items your partner put into utensils matched no recipe and '
     "were thrown away.\n"
     '- commitment: "abandons tasks" if your partner often put down what they were carrying where it was '
-    "not needed, or left a job half done and switched to something else.\n"
+    "not needed, or left a job half done (for example a loaded utensil they did not start, or "
+    "finished food they did not take out) and switched to something else.\n"
     "- stage_shares: your estimate of how your partner's work split between prep, cook and serve "
     "(percentages that add up to 100).")
 
 
 def truth_profile(traits) -> Dict[str, str]:
     """The answer a perfect observer should give for a partner with these traits."""
+    avoid = getattr(traits, "avoid_stations", ())
     return {
         "prefers": traits.preference[0] if traits.preference else "no clear preference",
+        "avoids": STATION_NAMES[avoid[0]] if avoid else "nothing",
+        "gives_way": "gives way to you" if getattr(traits, "yield_tasks", False) else "does not give way",
         "speed": "slow" if traits.step_period > 1 or traits.decision_delay > 0 else "normal",
         "reliability": "makes mistakes" if traits.slip_rate > 0 else "reliable",
-        "commitment": "abandons tasks" if traits.abandon_rate > 0 else "finishes tasks",
+        "commitment": ("abandons tasks" if traits.abandon_rate > 0 or getattr(traits, "unfinished_rate", 0) > 0
+                       else "finishes tasks"),
     }
 
 

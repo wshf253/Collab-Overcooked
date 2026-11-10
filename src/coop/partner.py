@@ -46,7 +46,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from overcooked_ai_py.mdp.actions import Action
 
 from .env import START
-from .nav import Pos, Unstick, access_cells, floor_cells, reach, step_aside, step_towards, touches
+from .nav import (Pos, Unstick, access_cells, facing, floor_cells, reach, step_aside, step_towards,
+                  steps_to_face, touches)
 
 STAGES = ("prep", "cook", "serve")
 UTENSIL_STAGE = {"chopping_board": "prep", "blender": "prep", "pot": "cook", "oven": "cook"}
@@ -60,7 +61,11 @@ class Traits:
     decision_delay: int = 0            # idle steps before starting each new job
     slip_rate: float = 0.0             # chance a raw-ingredient job fetches a wrong ingredient
     abandon_rate: float = 0.0          # per-step chance of dropping the current job
-    abandon_cooldown: int = 15         # steps before an abandoned job may be taken again
+    abandon_cooldown: int = 15         # steps before an abandoned (or left) job may be taken again
+    yield_tasks: bool = False          # give way when the other player is heading for the same task
+    avoid_stations: Tuple[str, ...] = ()   # utensil kinds it does not use (if the other player can)
+    unfinished_rate: float = 0.0       # chance of walking away from starting a loaded utensil or
+                                       # taking finished food out of one
 
     def __post_init__(self):
         unknown = set(self.preference) - set(STAGES)
@@ -71,20 +76,37 @@ class Traits:
         if self.step_period < 1 or self.decision_delay < 0 or self.reluctance < 0 \
                 or self.abandon_cooldown < 0:
             raise ValueError("step_period >= 1; decision_delay, reluctance, abandon_cooldown >= 0")
-        for name in ("slip_rate", "abandon_rate"):
+        for name in ("slip_rate", "abandon_rate", "unfinished_rate"):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        unknown = set(self.avoid_stations) - set(UTENSIL_STAGE)
+        if unknown:
+            raise ValueError(f"avoid_stations must be utensil kinds from {sorted(UTENSIL_STAGE)}: {unknown}")
 
 
-# Starting set of partner types, one trait changed at a time from "steady".
+# Partner types, one trait changed at a time from "steady". All are stable: the same
+# traits on every day.
 PERSONAS: Dict[str, Traits] = {
     "steady": Traits(),
     "prep_first": Traits(preference=("prep", "cook", "serve"), reluctance=8),
     "serve_first": Traits(preference=("serve", "cook", "prep"), reluctance=8),
     "slow": Traits(step_period=2, decision_delay=2),
+    # Gives way on tasks: if the other player is heading for the same job, it picks another.
+    "yielding": Traits(yield_tasks=True),
+    # Never uses the chopping board when the other player can reach one.
+    "avoids_board": Traits(avoid_stations=("chopping_board",)),
+    # Half the time walks away from starting a loaded utensil or from taking finished food
+    # out, and leaves it for 15 steps: unfinished work stays visible.
+    "leaves_unfinished": Traits(unfinished_rate=0.5),
+    # Kept for later tests; replaced in the default lists because their traits were hard
+    # to see (sloppy) or looked like normal hand-overs (flaky).
     "sloppy": Traits(slip_rate=0.3),
     "flaky": Traits(abandon_rate=0.08),
 }
+
+# The partner types experiments use by default.
+DEFAULT_PERSONAS = ["steady", "prep_first", "serve_first", "slow", "yielding", "avoids_board",
+                    "leaves_unfinished"]
 
 
 @dataclass(frozen=True)
@@ -152,6 +174,8 @@ class SimulatedHuman:
         self.slip_decided = False
         self.trace: List[Dict[str, Any]] = []
         self.events: List[Dict[str, Any]] = []
+        self._prev_other: Optional[Pos] = None
+        self._last_other: Optional[Pos] = None
 
     def act(self, state, t: int) -> Tuple[Any, Any]:
         """Return (primitive action, interaction parameter) for this step."""
@@ -163,6 +187,10 @@ class SimulatedHuman:
                 self._end_job()       # finished, or no longer possible
             else:
                 self.job = current    # same job; the item may have moved
+        if (self.job is not None and self.traits.yield_tasks and self.me.held_object is None
+                and self._claimed(self.job)):
+            self.events.append({"t": t, "type": "yield", "job": self.job.describe()})
+            self._end_job()           # the other player is going for it: leave it to them
 
         if t % self.traits.step_period != 0:
             return self._log(t, "off_beat")
@@ -201,6 +229,8 @@ class SimulatedHuman:
             "stage_share_when_acting": {k: v / (len(acting) or 1) for k, v in sorted(stages.items())},
             "slips": sum(e["type"] == "slip" for e in self.events),
             "abandons": sum(e["type"] == "abandon" for e in self.events),
+            "yields": sum(e["type"] == "yield" for e in self.events),
+            "left_unfinished": sum(e["type"] == "left_unfinished" for e in self.events),
             "give_ways": self.unstick.give_ways,
         }
 
@@ -225,13 +255,63 @@ class SimulatedHuman:
             return Job("put_down", held.name, "other"), ""
         if not open_jobs:
             return None, "no_job"
+        if self.traits.yield_tasks:
+            free = [j for j in open_jobs if not self._claimed(j)]
+            if not free:
+                return None, "yielding"
+            if min(open_jobs, key=self._rank) not in free:
+                self.events.append({"t": t, "type": "yield", "job": min(open_jobs, key=self._rank).describe()})
+            open_jobs = free
         best = min(open_jobs, key=self._rank)   # min keeps enumeration order on ties
+        while self.traits.unfinished_rate and self._finishing(best):
+            if self.rng.random() >= self.traits.unfinished_rate:
+                break
+            # Walk away from it; someone else may finish it (or this partner, later).
+            self.events.append({"t": t, "type": "left_unfinished", "job": best.describe()})
+            self.cooldown[best.key] = t + self.traits.abandon_cooldown
+            open_jobs = [j for j in open_jobs if j.key != best.key]
+            if not open_jobs:
+                return None, "left_unfinished"
+            best = min(open_jobs, key=self._rank)
         pref = self.traits.preference
         if pref and best.stage != pref[0] and self.waited < self.traits.reluctance:
             self.waited += 1
             return None, "reluctant"
         self.waited = 0
         return best, ""
+
+    def _finishing(self, job: Job) -> bool:
+        """Jobs that finish a step someone started: starting a loaded utensil, or taking
+        finished food out of one."""
+        return job.kind == "start" or (job.kind == "bring" and job.pos in self.kind_at)
+
+    def _job_targets(self, job: Job) -> List[Pos]:
+        if job.kind == "bring":
+            return self.cells.get("I", []) if job.pos is None else [job.pos]
+        if job.kind == "supply_dish":
+            dishes = [p for p, o in self.objects.items() if o.name == "dish"]
+            return dishes or self.cells.get("D", [])
+        return [job.pos] if job.pos is not None else []
+
+    def _claimed(self, job: Job) -> bool:
+        """Does the other player look like they are going for this job?
+
+        True if they stand facing its station, or if they are closer to it than me
+        and got closer since the last step. Only public positions are used.
+        """
+        targets = self._job_targets(job)
+        if not targets or self.other.held_object is not None and job.kind != "plate":
+            return False
+        other = tuple(self.other.position)
+        if facing(other, self.other.orientation) in targets:
+            return True
+        d_other = steps_to_face(self.floor, other, targets)
+        d_me = steps_to_face(self.floor, tuple(self.me.position), targets)
+        prev = self._prev_other
+        if d_other is None or prev is None or d_me is None:
+            return False
+        d_prev = steps_to_face(self.floor, prev, targets)
+        return d_other < d_me and d_prev is not None and d_other < d_prev
 
     @staticmethod
     def _uses(job: Job, held) -> bool:
@@ -247,6 +327,8 @@ class SimulatedHuman:
         self.objects = state.objects
         self.me = state.players[self.index]
         self.other = state.players[1 - self.index]
+        self._prev_other = self._last_other
+        self._last_other = tuple(self.other.position)
         self.my_reach = reach(self.floor, self.me.position)
         self.other_reach = reach(self.floor, self.other.position)
 
@@ -271,7 +353,20 @@ class SimulatedHuman:
             if job.key not in keys:
                 keys.add(job.key)
                 out.append(job)
+        if self.traits.avoid_stations:
+            # Soft: a station kind is avoided only if the other player can use one of them.
+            avoided = {k for k in self.traits.avoid_stations
+                       if any(self._theirs(p) for p in self.stations.get(k, []))}
+            out = [j for j in out if not (self._station_kinds(j) & avoided)]
         return out
+
+    def _station_kinds(self, job: Job) -> set:
+        kinds = set()
+        if job.pos is not None and job.pos in self.kind_at:
+            kinds.add(self.kind_at[job.pos])
+        if job.kind == "bring" and job.dest is not None:
+            kinds.add(self.recipes[job.dest][0])
+        return kinds
 
     def _bring(self, item: str, dest: Optional[str], pos: Optional[Pos]) -> Job:
         if dest is None:

@@ -31,7 +31,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 REFERENCE = "_reference"
-FIELDS = ("prefers", "speed", "reliability", "commitment")
+from .profile import PROFILE_FIELDS
+
+FIELDS = tuple(PROFILE_FIELDS)
 
 
 def _mean_se(xs: List[float]) -> Dict[str, Optional[float]]:

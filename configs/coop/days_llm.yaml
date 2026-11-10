@@ -16,7 +16,8 @@ wrong_delivery_penalty: 20
 days: 5
 episodes_per_day: 2
 ego_index: 0            # ego on the right (pot, oven, serving); the partner on the left (dispenser, board, blender, dishes)
-personas: [steady, prep_first, serve_first, slow, sloppy, flaky]
+personas: [steady, prep_first, serve_first, slow, yielding, avoids_board, leaves_unfinished]
+# also defined, for later tests: sloppy, flaky
 run_seeds: [0, 1]
 agent:
   type: llm
