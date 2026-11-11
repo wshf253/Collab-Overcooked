@@ -345,6 +345,12 @@ For an LLM run, prints:
 - how decisions were spent: wait share, chosen wait length, waits that ran
   their full length vs ended by the partner, and full-length waits that ended
   with finished food sitting in a utensil the ego can reach;
+- division of labour: each player's completed work split into prep / cook / serve
+  (prep = raw ingredients, chopping board, blender; cook = pot, oven; serve =
+  dishes, plating, delivering; the probe's definitions), from `steps.jsonl`, with
+  an overlap index (sum over stages of min(ego %, partner %): 100 = same mix, 0 =
+  fully split) and its difference vs `direct` / `tom_memory` per persona (SE
+  over runs). Hand-overs (`place_obj_on_counter`) are counted separately;
 - LLM health: calls, invalid replies, fallbacks, thinking/truncated replies.
 
 ## Run on the lab server

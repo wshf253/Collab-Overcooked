@@ -14,6 +14,9 @@ Reports, per condition and persona:
   waits ended (full length / early because the partner acted), and **waits that
   ran their full length while finished food sat in a utensil the ego can reach**
   (seen in the next decision's prompt);
+* division of labour: each player's completed work split into prep / cook /
+  serve (the probe's stage definitions), and how much the two mixes overlap,
+  compared with direct and tom_memory over runs;
 * LLM health: calls per episode, invalid replies, fallbacks, thinking or
   truncated replies, latency.
 
@@ -53,8 +56,82 @@ def load_episodes(out: Path) -> List[Dict[str, Any]]:
         log_path = d / "agent_log.json"
         log = json.loads(log_path.read_text()) if log_path.exists() else {}
         eps.append({"condition": cond, "persona": s["persona"], "seed": s["run_seed"], "day": s["day"],
-                    "episode": s["episode"], "summary": s, "log": log})
+                    "episode": s["episode"], "summary": s, "log": log, "dir": d})
     return eps
+
+
+# ---------------------------------------------------------------------- #
+# Division of labour (from steps.jsonl: every completed action of both players)
+# ---------------------------------------------------------------------- #
+LABOUR_STAGES = ("prep", "cook", "serve")
+PREP_UTENSILS = ("chopping_board", "blender")
+COOK_UTENSILS = ("pot", "oven")
+
+
+def action_stage(action: str, raw: set, finals: set) -> str:
+    """Stage of one completed action, with the stage definitions the probe uses:
+    prep = raw ingredients, chopping board, blender; cook = pot, oven; serve = dishes,
+    plating, delivering. Putting an item on a counter is a hand-over ("handover")."""
+    a = action.replace(" ", "")
+    m = re.fullmatch(r"(\w+)\((.*)\)", a)
+    if not m:
+        return "other"
+    name, args = m.group(1), [x for x in m.group(2).split(",") if x]
+    if name == "place_obj_on_counter":
+        return "handover"
+    if name in ("deliver_soup", "fill_dish_with_food"):
+        return "serve"
+    if name in ("cut", "stir"):
+        return "prep"
+    if name in ("cook", "bake"):
+        return "cook"
+    utensil = re.sub(r"\d+$", "", args[-1]) if args else ""
+    if name == "put_obj_in_utensil":
+        return "prep" if utensil in PREP_UTENSILS else "cook" if utensil in COOK_UTENSILS else "other"
+    if name == "pickup" and len(args) == 2:
+        item, place = args[0], utensil
+        if place == "ingredient_dispenser":
+            return "prep"
+        if place == "dish_dispenser" or item == "dish":
+            return "serve"
+        if place in PREP_UTENSILS:
+            return "prep"
+        if place in COOK_UTENSILS:
+            return "cook"
+        if place == "counter":       # moving an item from a counter: by what it is
+            return "prep" if item in raw else "serve" if item in finals else "cook"
+    return "other"
+
+
+def labour_stats(ep_dir: Path, ego: int, raw: set, finals: set) -> Optional[Dict[str, Any]]:
+    path = ep_dir / "steps.jsonl"
+    if not path.exists():
+        return None
+    counts = [Counter(), Counter()]
+    with open(path) as f:
+        for line in f:
+            for i, a in enumerate(json.loads(line).get("completed") or []):
+                if a:
+                    counts[i][action_stage(a, raw, finals)] += 1
+    out = {}
+    for who, c in (("ego", counts[ego]), ("partner", counts[1 - ego])):
+        work = sum(c[s] for s in LABOUR_STAGES)
+        out[who] = {"actions": sum(c.values()), "handovers": c["handover"],
+                    "share": {s: (100.0 * c[s] / work if work else None) for s in LABOUR_STAGES}}
+    e, p = out["ego"]["share"], out["partner"]["share"]
+    out["overlap"] = (sum(min(e[s], p[s]) for s in LABOUR_STAGES)
+                      if all(v is not None for v in list(e.values()) + list(p.values())) else None)
+    return out
+
+
+def _layout_items(out: Path) -> tuple:
+    """Raw ingredients and orderable dishes of the run (from its config and layout)."""
+    cfg = json.loads((out / "config.json").read_text())
+    from overcooked_ai_py.data.layouts import read_layout_dict
+    layout = read_layout_dict(cfg.get("layout", "new_env"))
+    menu = cfg.get("menu") or []
+    finals = set(menu if isinstance(menu, list) else menu.keys())
+    return set(layout.get("ingredients", [])), finals
 
 
 def _reachable_utensils(system_prompt: str) -> List[str]:
@@ -231,7 +308,60 @@ def analyse(out: Path) -> Dict[str, Any]:
                     [e["summary"]["score"] - get(e) for e in allc if get(e) is not None])
                 report["overall"][cond][f"vs_{other}_runs"] = _paired_runs(allc, get)
     report["dishes"] = dish_table(eps)
+    report["labour"] = labour_table(out, eps, conditions)
     return report
+
+
+def labour_table(out: Path, eps: List[Dict[str, Any]], conditions: List[str]) -> Dict[str, Any]:
+    """condition -> persona -> mean stage shares of ego and partner, overlap, workload;
+    plus overlap differences vs direct / tom_memory with SE over runs."""
+    try:
+        raw, finals = _layout_items(out)
+    except (OSError, ValueError, KeyError):
+        return {}
+    stats = {}
+    for e in eps:
+        st = labour_stats(e["dir"], e["summary"].get("ego_index", 0), raw, finals)
+        if st:
+            stats[(e["condition"], e["persona"], e["seed"], e["day"], e["episode"])] = st
+    table: Dict[str, Any] = {"rows": {}, "overlap_vs": {}}
+    for cond in list(conditions) + [REFERENCE]:
+        rows = {}
+        for persona in sorted({e["persona"] for e in eps}):
+            mine = [v for k, v in stats.items() if k[0] == cond and k[1] == persona]
+            if not mine:
+                continue
+            share = lambda who, s: _mean_se([m[who]["share"][s] for m in mine])["mean"]
+            rows[persona] = {
+                "episodes": len(mine),
+                "ego_share": {s: share("ego", s) for s in LABOUR_STAGES},
+                "partner_share": {s: share("partner", s) for s in LABOUR_STAGES},
+                "overlap": _mean_se([m["overlap"] for m in mine]),
+                "ego_actions": _mean_se([m["ego"]["actions"] for m in mine])["mean"],
+                "partner_actions": _mean_se([m["partner"]["actions"] for m in mine])["mean"],
+                "ego_handovers": _mean_se([m["ego"]["handovers"] for m in mine])["mean"],
+            }
+        if rows:
+            table["rows"][cond] = rows
+    for cond in conditions:
+        table["overlap_vs"][cond] = {}
+        for other in COMPARE_TO:
+            if other == cond or other not in conditions:
+                continue
+            per_run: Dict[tuple, List[float]] = defaultdict(list)
+            per_persona: Dict[str, Dict[tuple, List[float]]] = defaultdict(lambda: defaultdict(list))
+            for k, v in stats.items():
+                if k[0] != cond or v["overlap"] is None:
+                    continue
+                o = stats.get((other,) + k[1:])
+                if o and o["overlap"] is not None:
+                    per_run[(k[1], k[2])].append(v["overlap"] - o["overlap"])
+                    per_persona[k[1]][k[2]].append(v["overlap"] - o["overlap"])
+            table["overlap_vs"][cond][other] = {
+                "all": _mean_se([statistics.fmean(x) for x in per_run.values()]),
+                "personas": {p: _mean_se([statistics.fmean(x) for x in runs.values()])
+                             for p, runs in per_persona.items()}}
+    return table
 
 
 def dish_table(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -285,6 +415,30 @@ def format_report(rep: Dict[str, Any]) -> str:
         for persona, r in rows.items():
             lines.append(f"  {persona:<12} {_fmt(r['vs_reference']):>12} | {_fmt(r['vs_reference_first_day']):>12}"
                          f" -> {_fmt(r['vs_reference_last_day']):<12} vs direct {_fmt(r['vs_direct'])}")
+    lab = rep.get("labour") or {}
+    if lab.get("rows"):
+        lines.append("\n== division of labour: share of each player's completed work by stage (%) ==")
+        lines.append("prep = raw ingredients, chopping board, blender; cook = pot, oven; serve = dishes, plating, "
+                     "delivering. overlap = sum over stages of min(ego%, partner%): 100 = same mix, 0 = fully split.")
+        conds = list(lab["rows"])
+        for persona in sorted({p for rows in lab["rows"].values() for p in rows}):
+            lines.append(f"{persona}")
+            lines.append(f"  {'condition':<20}{'ego prep/cook/serve':>22}{'partner prep/cook/serve':>26}"
+                         f"{'overlap':>14}{'ego acts':>10}{'partner acts':>14}")
+            for cond in conds:
+                r = lab["rows"][cond].get(persona)
+                if not r:
+                    continue
+                es = "/".join(f"{r['ego_share'][s]:.0f}" if r["ego_share"][s] is not None else "-" for s in LABOUR_STAGES)
+                ps = "/".join(f"{r['partner_share'][s]:.0f}" if r["partner_share"][s] is not None else "-"
+                              for s in LABOUR_STAGES)
+                lines.append(f"  {cond:<20}{es:>22}{ps:>26}{_fmt(r['overlap'], signed=False):>14}"
+                             f"{r['ego_actions']:>10.1f}{r['partner_actions']:>14.1f}")
+        lines.append("overlap difference (mean±SE over runs; negative = the ego splits the work more):")
+        for cond, vs in lab.get("overlap_vs", {}).items():
+            for other, d in vs.items():
+                per = ", ".join(f"{p} {_fmt(v)}" for p, v in sorted(d["personas"].items()))
+                lines.append(f"  {cond} - {other}: {_fmt(d['all'])}  [{per}]")
     lines.append("\n== partner probe: accuracy per field (most common answer; truth) ==")
     for cond, rows in rep["conditions"].items():
         lines.append(f"{cond}")
