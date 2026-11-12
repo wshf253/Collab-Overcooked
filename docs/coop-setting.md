@@ -1,5 +1,7 @@
 # Coop research setting (`src/coop`)
 
+Current research status and results: [`RESEARCH_STATUS.md`](../RESEARCH_STATUS.md).
+
 This setting uses the Collab-Overcooked environment (utensils, multi-step
 recipes, layouts). Its goal is to learn about a partner by watching it act,
 then use that knowledge to work together well. Both agents will have the same
