@@ -214,7 +214,11 @@ class LLMAgentTests(unittest.TestCase):
         self.assertEqual(set(rep["conditions"]), {"direct", "tom", "memory"})
         row = rep["conditions"]["tom"]["flaky"]
         self.assertEqual(row["episodes"], 4)
-        self.assertEqual(row["probe"]["commitment"]["truth"], "abandons tasks")
+        # Abandoning looks like a hand-over, and on the split map no needed utensil is
+        # reachable by both: neither field is scored.
+        self.assertNotIn("commitment", row["probe"])
+        self.assertNotIn("avoids", row["probe"])
+        self.assertEqual(row["probe"]["speed"]["truth"], "normal")
         self.assertIsNotNone(rep["overall"]["tom"]["vs_direct"]["mean"])
         self.assertIn("partner probe", format_report(rep))
         self.assertIn("steps per completed order, by dish", format_report(rep))
@@ -243,12 +247,17 @@ class LLMAgentTests(unittest.TestCase):
 
     def test_probe_is_scored_against_the_true_persona(self):
         probe = self.ep("direct", 1, 1, "summary.json")["probe"]
-        self.assertEqual(probe["truth"], {"prefers": "no clear preference", "avoids": "nothing",
+        self.assertEqual(probe["truth"], {"prefers": "no clear preference", "avoids": None,
                                           "gives_way": "does not give way", "speed": "normal",
-                                          "reliability": "reliable", "commitment": "abandons tasks"})
-        self.assertFalse(probe["correct"]["commitment"])     # the mock always says "finishes tasks"
-        self.assertAlmostEqual(probe["accuracy"], 5 / 6)
-        self.assertAlmostEqual(self.res["table"]["direct"]["flaky"]["1"]["probe_accuracy"], 5 / 6)
+                                          "reliability": "reliable", "commitment": None})
+        self.assertEqual(set(probe["correct"]), {"prefers", "gives_way", "speed", "reliability"})
+        self.assertAlmostEqual(probe["accuracy"], 1.0)
+        self.assertAlmostEqual(self.res["table"]["direct"]["flaky"]["1"]["probe_accuracy"], 1.0)
+        log = self.ep("direct", 1, 1, "agent_log.json")
+        probe_call = [c for c in log["calls"] if c["kind"] == "probe"][0]["user"]
+        self.assertIn("Your partner's pace", probe_call)
+        self.assertIn("avoids is not asked", probe_call)
+        self.assertNotIn('"avoids"', probe_call)
 
 
 class FakeBackend:
@@ -285,7 +294,7 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(agent.fallbacks, len(agent.decisions))
         self.assertTrue(all(d["chosen"] == "wait(1)" for d in agent.decisions))
         # Invalid profile values are dropped instead of guessed.
-        self.assertEqual(summary["probe"]["answer"], {"prefers": "prep", "avoids": None, "gives_way": None,
+        self.assertEqual(summary["probe"]["answer"], {"prefers": "prep", "gives_way": None,
                                                       "speed": None, "reliability": None, "commitment": None})
 
 

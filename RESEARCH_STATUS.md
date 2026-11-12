@@ -1,6 +1,6 @@
 # Research status: partner modelling (ToM) and memory in Collab-Overcooked
 
-Last updated: 2026-11-12 (branch `claude/lucid-babbage-96q0zi`, code up to commit `5563d6b`).
+Last updated: 2026-11-12 (branch `claude/lucid-babbage-96q0zi`; probe rules changed 2026-11-12, see §5).
 How to run everything: [`docs/coop-setting.md`](docs/coop-setting.md).
 
 ## 1. Question
@@ -46,7 +46,7 @@ improve teamwork, and is the gain about **this partner** or just general skill?
   - score minus a scripted reference ego on **identical orders** (removes how hard a day's orders are);
   - paired differences with standard errors over **runs** (persona × seed);
   - a partner probe after each episode: trait labels plus prep/cook/serve shares, scored against
-    the true persona;
+    the true persona (rules in `docs/coop-setting.md`, "Probe rules");
   - division of labour: each player's stage mix, and an overlap index (100 = same mix, 0 = fully split).
 
 ## 3. Results so far
@@ -130,12 +130,18 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 
 - **One model (Qwen3.8-27B).** Effects are a few points per episode. 2–4 seeds. Many comparisons:
   only the `serve_first` effects are large enough to survive correction for multiple comparisons.
-- **Probe label problems:**
-  - preference partners get called "slow", because waiting for preferred work looks like slowness;
-  - `avoids` is scored "nothing" even when a station isn't needed by the menu (e.g. the blender);
-  - abandoning (`flaky`) is never detected.
+- **Probe labels (fixed 2026-11-12; the runs in §3 used the old probe):**
+  - **Old problems:** preference partners were called "slow" (waiting for preferred work looks
+    like slowness); `avoids` asked about utensils no order needed (e.g. the blender); abandoning
+    (`flaky`) was never detected.
+  - **New rules:** `avoids` only over needed utensils both players reach, so it is not asked on
+    `new_env`. `speed` comes with an observed pace line, and waiting is defined as a preference.
+    `flaky`'s commitment is not scored, and commitment means visibly unfinished work.
+  - **Old folders:** `coop.analyze` rescores them with the new `avoids`/`commitment` rules. Their
+    speed answers are still the old ones (no pace line), so new speed accuracy is not comparable.
+  - Speed accuracy now measures using an observed cue, not inferring pace unaided.
 
-  Quote the preference label and the stage shares; not the other fields.
+  For the runs in §3, quote the preference label and the stage shares, not the other fields.
 - **Residual agent errors:**
   - lifting dish-served food by hand: about 51% of invalid replies on the split map;
   - full hands / starting with full hands: most invalid replies on open maps.
@@ -146,8 +152,8 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 
 ## 6. Next steps (in order)
 
-1. **Probe label fixes:** score `avoids` only over stations the menu needs; separate "waiting for
-   preferred work" from "slow"; make abandoning visible, or drop it.
+1. ~~Probe label fixes~~ (done 2026-11-12). The pace line and the new options change the
+   reflection prompt, so memory conditions can behave differently: new runs need a new `--out`.
 2. **Order-habit partners** (e.g. `newest_first`, `same_dish_first`), so the best response depends on
    the partner. Then the value screen with 16+ seeds, then LLM runs with several open orders and
    radius 2, with the controls.

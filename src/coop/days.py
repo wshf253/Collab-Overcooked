@@ -61,7 +61,8 @@ from .env import ContinuousOrderEnv
 from .llm import build_backend
 from .orders import normalize_menu
 from .partner import PERSONAS, SimulatedHuman, Traits
-from .profile import score_profile, truth_profile
+from .kitchen import Kitchen
+from .profile import avoid_options, score_profile, truth_profile
 
 REFERENCE = "_reference"
 CONFIG_KEYS = {
@@ -237,7 +238,7 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     env = ContinuousOrderEnv(cfg.menu, layout=cfg.layout, horizon=cfg.horizon,
                              wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat,
                              open_orders=cfg.open_orders)
-    env.reset(seed)
+    start = env.reset(seed)
     traits = persona_traits(persona, cfg.custom_personas)
     partner = SimulatedHuman(traits, persona)
     partner.reset(env.mdp, other, seed, view_radius=cfg.view_radius)    # same view rules for everyone
@@ -271,8 +272,12 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     agent.end_episode(dict(public, context=context))
     agent_log = agent.episode_log()
     probe = agent_log.get("probe") if isinstance(agent_log, dict) else None
+    # Truth for this episode: avoids is asked only over utensils the orders needed and
+    # both players can reach (computed here from the map and orders, not from the agent).
+    avoid = avoid_options(Kitchen(env.mdp, ego, start), [o["name"] for o in summary["orders"]])
+    truth = truth_profile(traits, avoid)
     if probe and probe.get("partner_profile"):
-        summary["probe"] = score_profile(probe["partner_profile"], truth_profile(traits),
+        summary["probe"] = score_profile(probe["partner_profile"], truth,
                                          probe.get("stage_shares"),
                                          partner.summary()["stage_share_when_acting"])
     if isinstance(agent_log, dict) and "usage" in agent_log:
@@ -281,7 +286,7 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     (ep_dir / "summary.json").write_text(json.dumps(summary, indent=1))
     (ep_dir / "partner_truth.json").write_text(json.dumps({
         "persona": persona, "index": other, "traits": asdict(traits),
-        "profile": truth_profile(traits), "summary": partner.summary(),
+        "profile": truth, "avoid_options": avoid, "summary": partner.summary(),
         "events": partner.events, "trace": partner.trace}))
     (ep_dir / "agent_log.json").write_text(json.dumps(agent_log))
     return summary
@@ -422,7 +427,7 @@ def _metrics(summary: Dict[str, Any]) -> Dict[str, Any]:
 # Files whose changes alter how episodes are played (analysis/screening code is left out).
 CODE_FILES = ["src/coop/" + f for f in ("agents.py", "days.py", "env.py", "executor.py", "kitchen.py",
                                         "llm.py", "llm_agent.py", "nav.py", "orders.py", "partner.py",
-                                        "profile.py")] + ["lib/overcooked_ai/overcooked_ai_py/mdp/overcooked_mdp.py"]
+                                        "profile.py", "view.py")] + ["lib/overcooked_ai/overcooked_ai_py/mdp/overcooked_mdp.py"]
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -542,7 +547,9 @@ def day_table(cfg: DaysConfig, records: List[Dict[str, Any]]) -> Dict[str, Any]:
                        "probe_accuracy": _mean(e.get("probe_accuracy") for _, e in d)}
                 probes = [e["probe_correct"] for _, e in d if e.get("probe_correct")]
                 if probes:
-                    row["probe_field_accuracy"] = {k: _mean(float(p[k]) for p in probes) for k in probes[0]}
+                    fields = sorted({k for p in probes for k in p})
+                    row["probe_field_accuracy"] = {k: _mean(float(p[k]) for p in probes if k in p)
+                                                   for k in fields}
                 rows[str(day)] = row
             table[cond][persona] = rows
     return table

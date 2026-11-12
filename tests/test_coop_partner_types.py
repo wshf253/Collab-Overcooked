@@ -79,7 +79,7 @@ class NewTypeTests(unittest.TestCase):
     def test_truth_profiles(self):
         self.assertEqual(truth_profile(PERSONAS["yielding"])["gives_way"], "gives way to you")
         self.assertEqual(truth_profile(PERSONAS["avoids_board"])["avoids"], "chopping board")
-        self.assertEqual(truth_profile(PERSONAS["leaves_unfinished"])["commitment"], "abandons tasks")
+        self.assertEqual(truth_profile(PERSONAS["leaves_unfinished"])["commitment"], "leaves tasks unfinished")
         self.assertEqual(truth_profile(PERSONAS["steady"])["gives_way"], "does not give way")
 
 

@@ -9,7 +9,10 @@ Reports, per condition and persona:
 * paired differences with standard errors over runs (episodes of one run share
   memory, so the run is the unit), including vs ``tom_memory`` for the controls;
 * the partner probe: accuracy per field and the most common answer, and the error
-  of the estimated stage shares against the partner's real ones;
+  of the estimated stage shares against the partner's real ones. Probes are
+  rescored with the current rules (``coop.profile``), so older folders are read
+  the same way as new ones: ``avoids`` only over utensils the orders needed and
+  both players reach, abandoning not scored, renamed options mapped;
 * how the ego spent its decisions: share of ``wait``, chosen wait length, how
   waits ended (full length / early because the partner acted), and **waits that
   ran their full length while finished food sat in a utensil the ego can reach**
@@ -34,7 +37,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 REFERENCE = "_reference"
-from .profile import PROFILE_FIELDS
+from .kitchen import Kitchen
+from .profile import PROFILE_FIELDS, avoid_options, legacy_answer, score_profile, truth_profile
 
 FIELDS = tuple(PROFILE_FIELDS)
 
@@ -58,6 +62,41 @@ def load_episodes(out: Path) -> List[Dict[str, Any]]:
         eps.append({"condition": cond, "persona": s["persona"], "seed": s["run_seed"], "day": s["day"],
                     "episode": s["episode"], "summary": s, "log": log, "dir": d})
     return eps
+
+
+# ---------------------------------------------------------------------- #
+# Probe rescoring (current rules, for folders written under earlier ones)
+# ---------------------------------------------------------------------- #
+_KITCHENS: Dict[tuple, Kitchen] = {}
+
+
+def _kitchen(layout: str, ego: int, dishes: List[str]) -> Kitchen:
+    if (layout, ego) not in _KITCHENS:
+        from .env import ContinuousOrderEnv
+        env = ContinuousOrderEnv(sorted(set(dishes)), layout=layout)
+        _KITCHENS[(layout, ego)] = Kitchen(env.mdp, ego, env.reset(0))
+    return _KITCHENS[(layout, ego)]
+
+
+def rescore_probe(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The episode's probe scored with the current rules (None without a probe)."""
+    s = e["summary"]
+    probe = s.get("probe")
+    if not probe:
+        return None
+    truth_path = e["dir"] / "partner_truth.json"
+    if not truth_path.exists():
+        return probe
+    traits = json.loads(truth_path.read_text())["traits"]
+    dishes = [o["name"] for o in s.get("orders", [])]
+    if not dishes:
+        return probe
+    avoid = avoid_options(_kitchen(s["layout"], s.get("ego_index", 0), dishes), dishes)
+    out = score_profile(legacy_answer(probe["answer"], avoid), truth_profile(traits, avoid))
+    for k in ("shares", "true_shares", "share_error"):
+        if k in probe:
+            out[k] = probe[k]
+    return out
 
 
 # ---------------------------------------------------------------------- #
@@ -254,13 +293,22 @@ def analyse(out: Path) -> Dict[str, Any]:
                     d = by_key.get(("direct",) + key(e))
                     if d:
                         vs_direct.append(e["summary"]["score"] - d["summary"]["score"])
-            probes = [e["summary"].get("probe") for e in mine if e["summary"].get("probe")]
+            probes = [p for p in (rescore_probe(e) for e in mine) if p]
             probe = {}
             if probes:
                 for f in FIELDS:
-                    answers = Counter(str(p["answer"].get(f)) for p in probes)
-                    probe[f] = {"accuracy": statistics.fmean(float(p["correct"][f]) for p in probes),
-                                "truth": probes[0]["truth"][f], "answers": dict(answers.most_common())}
+                    scored = [p for p in probes if f in p["correct"]]
+                    if not scored:
+                        continue
+                    answers = Counter(str(p["answer"].get(f)) for p in scored)
+                    truths = Counter(str(p["truth"][f]) for p in scored)
+                    probe[f] = {"accuracy": statistics.fmean(float(p["correct"][f]) for p in scored),
+                                "n": len(scored), "truth": truths.most_common(1)[0][0],
+                                "answers": dict(answers.most_common())}
+                paces = [(e["log"].get("probe") or {}).get("pace") for e in mine]
+                paces = [x for x in paces if x is not None]
+                if paces:
+                    probe["pace"] = statistics.fmean(paces)
                 errs = [p["share_error"] for p in probes if p.get("share_error") is not None]
                 if errs:
                     probe["share_error"] = statistics.fmean(errs)
@@ -439,7 +487,9 @@ def format_report(rep: Dict[str, Any]) -> str:
             for other, d in vs.items():
                 per = ", ".join(f"{p} {_fmt(v)}" for p, v in sorted(d["personas"].items()))
                 lines.append(f"  {cond} - {other}: {_fmt(d['all'])}  [{per}]")
-    lines.append("\n== partner probe: accuracy per field (most common answer; truth) ==")
+    lines.append("\n== partner probe: accuracy per field (most common answer; truth), current rules ==")
+    lines.append("  (a field shown with n= was scored in fewer episodes: avoids only where a needed utensil "
+                 "is reachable by both; pace = observed share of actions followed by another)")
     for cond, rows in rep["conditions"].items():
         lines.append(f"{cond}")
         for persona, r in rows.items():
@@ -448,7 +498,10 @@ def format_report(rep: Dict[str, Any]) -> str:
                 p = r["probe"].get(f)
                 if p:
                     top = next(iter(p["answers"]))
-                    cells.append(f"{f} {p['accuracy']:.2f} ('{top}'; truth '{p['truth']}')")
+                    n = f" n={p['n']}" if p.get("n") and p["n"] < r["episodes"] else ""
+                    cells.append(f"{f} {p['accuracy']:.2f} ('{top}'; truth '{p['truth']}'{n})")
+            if r["probe"].get("pace") is not None:
+                cells.append(f"pace {100 * r['probe']['pace']:.0f}%")
             if r["probe"].get("share_error") is not None:
                 cells.append(f"stage-share error {r['probe']['share_error']:.0f} pts")
             lines.append(f"  {persona:<12} " + " | ".join(cells))

@@ -300,7 +300,7 @@ the same abilities and there are no messages.
   |---|---|
   | `tom` | before each action, writes what the partner is doing and tends to do (`"partner"` field). Only the reply format differs from `tom: false`. |
   | `memory` | after each episode, reflects on the partner. The profile and notes (last `max_memory_notes`) appear in every later episode's system prompt. |
-  | `probe` | after each episode, rates the partner on four traits: `prefers` (prep/cook/serve/no clear preference), `speed` (normal/slow), `reliability` (reliable/makes mistakes), `commitment` (finishes/abandons tasks). Scored against the persona's true profile (`coop.profile`). Without `memory`, the answer is logged but never shown to the agent again. |
+  | `probe` | after each episode, rates the partner: `prefers` (prep/cook/serve/no clear preference), `avoids` (a utensil, or nothing), `gives_way`, `speed` (normal/slow), `reliability` (reliable/makes mistakes), `commitment` (finishes tasks/leaves tasks unfinished), plus `stage_shares`. Scored against the persona's true profile (`coop.profile`). Without `memory`, the answer is logged but never shown to the agent again. |
 
 - **Probe details.** The probe defines each answer the same way in every
   condition (`coop.profile.PROFILE_GUIDE`). It tells the agent how many actions it
@@ -308,6 +308,27 @@ the same abilities and there are no messages.
   cook / serve split in %), which are scored against the partner's real split
   (`share_error`, percentage points). Events about a batch that matched no recipe
   say who put each item in and who started the utensil, from the public action log.
+- **Probe rules** (since 2026-11-12; `coop.profile`):
+  - `avoids` is asked only over utensils that this episode's orders needed and that
+    both players can reach (`avoid_options`; e.g. never the blender with the default
+    menu, and not at all on `new_env`). If none qualifies, the field is not asked or
+    scored. The truth is the persona's avoided utensil if it is among them, else "nothing".
+  - `speed`: the probe shows an **observed pace** line, the share of the partner's
+    actions (move, turn, pick up, put down) that were followed by another action on the
+    very next step, counted only while the partner was in view. The agent sees the
+    kitchen only at its decision points, so it cannot see pace otherwise. `slow` scores
+    0% and every other type 57–82% (scripted calibration). The guide says that waiting
+    for preferred work is a preference, not slowness. Speed accuracy therefore measures
+    reading and using this cue, not inferring pace unaided.
+  - `commitment` is about visibly unfinished work (`leaves_unfinished`). Abandoning a
+    carried item (`flaky`) puts it on a counter, which looks exactly like a hand-over,
+    so `flaky`'s commitment is not scored (truth `None`).
+  - Fields with truth `None` are left out of `accuracy`. `coop.analyze` rescores every
+    probe with the current rules (from `partner_truth.json` and the episode's orders), so
+    older output folders are read the same way. Old "abandons tasks" answers count as
+    "leaves tasks unfinished", and an old `avoids` answer naming a utensil outside the
+    current options counts as "nothing". Old runs had no pace line, so their speed
+    answers are not comparable to new ones.
 - **Memory controls** (conditions with `memory_source`, run after their source
   condition, from its finished runs):
 
@@ -326,7 +347,7 @@ the same abilities and there are no messages.
   API; `*_env` keys read URL, model, key and `chat_template_kwargs` from
   environment variables) and `mock` (offline: picks from `VALID_ACTIONS`).
   `coop.check` verifies that thinking is off for a served model.
-- **Probe caveat on `new_env`:** the ego is on the right, so the partner works on
+- **Probe caveat on `new_env`** (`avoids` is not asked there): the ego is on the right, so the partner works on
   the left, which has the dispenser, chopping board, blender and dishes. The
   true `prefers` label comes from the persona's traits, but a `steady` partner
   still does mostly prep there. So `prefers` answers are hard to get right on
@@ -343,7 +364,8 @@ For an LLM run, prints:
 - score minus the reference by day and condition (mean ± SE over episodes),
   each condition minus `direct` on identical episodes, and first day vs last
   day per persona;
-- probe accuracy per field, with the most common answer and the truth;
+- probe accuracy per field (rescored with the current rules), with the most common
+  answer and the truth, the mean observed pace (new runs), and the stage-share error;
 - how decisions were spent: wait share, chosen wait length, waits that ran
   their full length vs ended by the partner, and full-length waits that ended
   with finished food sitting in a utensil the ego can reach;

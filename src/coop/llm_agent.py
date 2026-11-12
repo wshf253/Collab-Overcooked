@@ -29,7 +29,7 @@ from .agents import Agent, register_agent
 from .executor import MAX_WAIT, Executor, parse_macro
 from .kitchen import Kitchen, held_text
 from .llm import Usage, build_backend, parse_json
-from .profile import PROFILE_FIELDS, PROFILE_GUIDE, clean_profile, clean_shares
+from .profile import PROFILE_GUIDE, PaceCounter, avoid_options, clean_profile, clean_shares, probe_fields
 from .view import Belief
 
 GRAMMAR = f"""\
@@ -84,6 +84,7 @@ class LLMAgent(Agent):
         self.own_done = 0                                   # actions this agent completed
         self.loaded_by: Dict[str, List[Tuple[str, str]]] = {}   # utensil -> [(who, item)] since emptied
         self.prev_held: List[Optional[str]] = [None, None]
+        self.pace = PaceCounter()                           # partner's observed pace (for the probe)
         self.own_log: List[Tuple[int, str, str]] = []      # (t, action, result)
         self.events: List[str] = []
         self.last_result = "this is the first decision of the episode"
@@ -161,6 +162,8 @@ class LLMAgent(Agent):
     # ------------------------------------------------------------------ #
     def _watch(self, state, t):
         k = self.kitchen
+        partner = state.players[k.other]
+        self.pace.update(partner, getattr(partner, "visible", True))
         starters: Dict[str, str] = {}
         if t > 0:
             for i in (k.index, k.other):
@@ -355,7 +358,10 @@ class LLMAgent(Agent):
     def _probe(self, result) -> Optional[Dict[str, Any]]:
         log = "\n".join(f"t={t}: {a}" for t, a in self.partner_log) or "(none)"
         events = "\n".join(self.events) or "(none)"
-        options = ", ".join(f'"{k}": ' + " | ".join(f'"{o}"' for o in v) for k, v in PROFILE_FIELDS.items())
+        dishes = [o["name"] for o in result.get("orders", [])]
+        avoid = avoid_options(self.kitchen, dishes) if self.kitchen is not None else []
+        fields = probe_fields(avoid)
+        options = ", ".join(f'"{k}": ' + " | ".join(f'"{o}"' for o in v) for k, v in fields.items())
         user = (
             "PARTNER_PROFILE_PROBE\n"
             f"The episode is over (day {result['day']}, episode {result['episode']}). Team score "
@@ -365,12 +371,16 @@ class LLMAgent(Agent):
             + (" that you saw" if self.belief is not None else "") + ".\n"
             + ("Every action of your partner that you saw" if self.belief is not None else
                "Every action your partner completed") + f" (time step: action):\n{log}\n"
-            f"Events:\n{events}\n\n"
+            f"Events:\n{events}\n"
+            f"{self.pace.text()}\n\n"
             "Describe your partner from what you saw. Stages: prep = getting raw ingredients and "
             "using the chopping board or blender; cook = using the pot or oven and moving products "
             "between utensils; serve = dishes, plating and delivering. A player can only do what "
             "their side of the kitchen allows.\n"
-            f"{PROFILE_GUIDE}\n"
+            + ("Utensils asked about under avoids (this episode's orders needed them and both of you "
+               f"can reach them): {', '.join(avoid)}.\n" if avoid else
+               "No utensil was both needed and reachable by both of you, so avoids is not asked.\n")
+            + f"{PROFILE_GUIDE}\n"
             f'Reply with JSON only: {{"partner_profile": {{{options}}}, "stage_shares": {{"prep": <percent>, '
             '"cook": <percent>, "serve": <percent>}, "notes": "<at most 80 words: what to do differently '
             'with this partner next time>"}')
@@ -379,7 +389,8 @@ class LLMAgent(Agent):
         if not parsed:
             return None
         notes = parsed.get("notes")
-        return {"partner_profile": clean_profile(parsed.get("partner_profile")),
+        return {"partner_profile": clean_profile(parsed.get("partner_profile"), fields),
+                "asked": {"avoids": avoid}, "pace": self.pace.share(),
                 "raw_profile": parsed.get("partner_profile"),
                 "stage_shares": clean_shares(parsed.get("stage_shares")),
                 "notes": notes if isinstance(notes, str) else ""}
