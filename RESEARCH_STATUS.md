@@ -173,6 +173,21 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 3. **A second model**, to check generality.
 4. **Later:** partners that change over days; an LLM-simulated or human partner as a realism check.
 
+## 6b. Planned: does partial view make tom_memory more useful? (set up 2026-11-13)
+
+No LLM run so far used partial view: every result in §3 has a full view and one open order.
+The scripted screen (§3.6) suggests that knowing the partner pays more with a partial view
+together with several orders.
+
+- **Main pair:** `days_llm_orders.yaml` (radius 2) vs `days_llm_orders_full.yaml` (full view),
+  same code, same personas, seeds and episodes.
+- **Analysis:** `python -m coop.compare outputs/days_orders outputs/days_orders_full`.
+- **Quantities of interest:**
+  - the change in `tom_memory - direct`: does ToM + memory help more with a partial view?
+  - the change in `tom_memory_swap - tom_memory`: is more of that gain partner-specific?
+- **Optional second pair** (partial view alone, original partner types, one order):
+  `days_llm.yaml --layout open_env --run-seeds 0 1 2 3`, with and without `--view-radius 2`.
+
 ## 7. Where things are
 
 | what | where |
@@ -182,7 +197,7 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 | simulated human, partner types | `src/coop/partner.py` (`PERSONAS`, `DEFAULT_PERSONAS`) |
 | LLM agent, prompts, probe | `src/coop/llm_agent.py`, `executor.py`, `kitchen.py`, `profile.py` |
 | multi-day runner, controls | `src/coop/days.py`; configs in `configs/coop/` (`days_llm.yaml`) |
-| analysis | `src/coop/analyze.py` |
+| analysis | `src/coop/analyze.py`; two folders: `src/coop/compare.py` |
 | scripted screens | `src/coop/screen.py` (partner types), `src/coop/voi.py` (value of knowing) |
 | serving script | `scripts/run_qwen38_days.sh` |
 | order-habit LLM config | `configs/coop/days_llm_orders.yaml` |

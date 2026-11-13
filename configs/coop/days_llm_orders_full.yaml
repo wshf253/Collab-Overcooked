@@ -1,0 +1,58 @@
+# FULL-VIEW COPY of days_llm_orders.yaml: identical except name and view_radius (a test checks this).
+# Compare the two with: python -m coop.compare outputs/days_orders outputs/days_orders_full
+#
+# Order habits: LLM ego with a simulated human that commits to one open order at a time
+# (coop.partner.ORDER_PERSONAS), on the open kitchen with two of every utensil, 2 open
+# orders and a partial view (radius 2) for both players. The scripted value screen
+# (coop.voi --ego-set commit) finds this the setting where knowing the partner pays most.
+#   steady          does whatever is needed next, oldest order first (no fixed habit)
+#   oldest_first    commits to the oldest open order
+#   newest_first    commits to the newest open order
+#   favourite_dish  commits to baked_carrot_soup whenever it is open
+#   repeats_dish    after serving a dish, takes an open order for the same dish
+# The probe adds an "orders" field (the habit); coop.analyze adds an "order habits" table.
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/days_llm_orders_full.yaml --out outputs/days_orders_full --workers 48
+name: days_llm_orders_full
+layout: open2_env
+menu: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: null       # full view: the comparison arm for days_llm_orders.yaml (radius 2)
+days: 5
+episodes_per_day: 2
+ego_index: 0
+personas: [steady, oldest_first, newest_first, favourite_dish, repeats_dish]
+run_seeds: [0, 1, 2, 3]
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL          # set by scripts/run_qwen38_days.sh
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS   # thinking off, picked by coop.check
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: true
+  max_memory_notes: 5
+  max_tokens: 300
+conditions:
+  direct: {tom: false, memory: false}
+  tom: {tom: true, memory: false}
+  memory: {tom: false, memory: true}
+  tom_memory: {tom: true, memory: true}
+  # swap donors have the opposite (or a different) habit, so the wrong notes point the
+  # ego at the wrong order.
+  tom_memory_swap:
+    tom: true
+    memory: true
+    memory_source:
+      type: swap
+      from: tom_memory
+      donors: {steady: newest_first, oldest_first: newest_first, newest_first: oldest_first,
+               favourite_dish: newest_first, repeats_dish: newest_first}
+  tom_memory_placebo: {tom: true, memory: true, memory_source: {type: placebo, from: tom_memory}}
+reference_agent: {type: scripted, persona: steady}

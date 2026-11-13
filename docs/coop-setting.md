@@ -264,6 +264,7 @@ PYTHONPATH=src:lib/overcooked_ai python -m coop.days configs/coop/days_smoke.yam
   | `days_llm_mock.yaml` | LLM ego with the offline mock backend (pipeline check, meaningless scores) |
   | `days_llm.yaml` | LLM ego (Qwen via vLLM), 4 conditions × 6 personas × 2 run seeds × 5 days × 2 episodes |
   | `days_llm_orders.yaml` | order habits: `open2_env`, 2 open orders, radius 2, `ORDER_PERSONAS` × 4 run seeds, all 6 conditions; swap donors with the opposite habit |
+  | `days_llm_orders_full.yaml` | the same with a full view (a test keeps the two identical otherwise): the comparison arm for partial view |
 
   `agent` is the base ego. `conditions` maps names to overrides of it (nested
   dicts merge one level), e.g. `tom: {tom: true}`. `custom_personas` defines
@@ -551,6 +552,34 @@ Order habits with the LLM ego (all six conditions):
 ```bash
 lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm_orders.yaml --out outputs/days_orders --workers 48
 ```
+
+## Comparing two settings (`coop.compare`)
+
+Does a setting (e.g. partial view) change how much a condition helps? Run the
+same config twice, differing only in that setting, then:
+
+```bash
+PYTHONPATH=src:lib/overcooked_ai python -m coop.compare outputs/days_orders outputs/days_orders_full --out outputs/compare_view_orders.json
+```
+
+The orders depend only on (run seed, day, episode), so each run (persona × run seed)
+in A has a twin in B. For each contrast (`tom_memory - direct`, `tom_memory_swap -
+tom_memory`, ...), it reports the contrast in A, in B, and the change (A − B) per
+run, with mean ± SE over runs, overall and per persona. A positive change for
+`tom_memory - direct` means `tom_memory` helps more in A. It also gives each
+condition's score minus that folder's own scripted reference, and probe accuracy per
+field. It warns if the two folders come from different code versions, and lists the
+config differences.
+
+Partial view vs full view with the LLM:
+
+```bash
+lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm_orders_full.yaml --out outputs/days_orders_full --workers 48
+```
+
+One open order, original partner types (partial view without order habits): run
+`days_llm.yaml --layout open_env --run-seeds 0 1 2 3` once with `--view-radius 2`
+and once without, into two new folders.
 
 ## Not built yet
 
