@@ -224,6 +224,22 @@ The code differs: the new probe has a pace line and new options, which also chan
     Partners with no preference are often called "cook";
   - **swapped notes carry over into the probe:** with notes from the `slow` partner, `serve_first`
     is called slow (speed 0.17). The answers lean on memory, not only on the episode.
+- **How the gain arises (decision stats):**
+  - **ToM makes the agent act less and wait more.** Wait share: `direct` 12–20%, `tom` 16–41%,
+    `tom_memory` 15–47%. Agent actions with `steady`: 71 (`direct`) → 50 (`tom_memory`), close to
+    the scripted reference (46).
+  - **Fewer invalid replies:** `direct` 760, `tom` 807, `tom_memory` 491. With `tom_memory`, more
+    waits end early because the partner acted (6 per episode with `steady` / `prep_first` /
+    `yielding`, vs 0 for `direct`).
+  - **The cost:** waits that ran their full length while finished food was ready rise from 6–9
+    (`direct`) to 11–15 (`tom_memory`).
+  - **Orders finish faster with tom_memory** (steps per order): baked_carrot_soup 50.6 → 46.0,
+    stew 50.0 → 48.2. The scripted reference makes the stew in 38.8.
+  - So much of the gain is the agent getting in its partner's way less. Only the part that needs
+    the agent's own notes (about +5) is a candidate for partner modelling.
+  - **`slow` barely completes any actions** (3–5 per episode, the reference too), so it is almost
+    an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
+    likely lesson in the notes is "do everything yourself".
 
 ### 3.8 How ToM and memory were implemented so far (important for reading §3)
 - **`tom`:** one or two free sentences about the partner before each action. They are never shown
