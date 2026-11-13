@@ -131,9 +131,43 @@ The agent learns to wait for hand-overs: longer waits, ended by partner actions,
     kind: both orders compete for it).
   - Preliminary (8 seeds); the 16-seed screen is the next run.
 
+### 3.7 Partial view vs full view, order habits (`days_orders` vs `days_orders_full`, 2026-11-13)
+Setting: `open2_env`, 2 open orders, `ORDER_PERSONAS` × 4 seeds (20 runs), 5 days × 2 episodes,
+all six conditions. A = radius 2, B = full view; otherwise identical. `coop.compare`, SE over runs.
+
+| contrast | partial (A) | full (B) | change A − B |
+|---|---|---|---|
+| tom − direct | +2.9 ± 3.5 | −1.8 ± 1.9 | +4.7 ± 4.0 |
+| memory − direct | +2.7 ± 3.2 | −1.2 ± 1.9 | +3.9 ± 3.7 |
+| **tom_memory − direct** | **+10.6 ± 3.6** | −0.8 ± 2.5 | **+11.4 ± 4.3** |
+| tom_memory − tom | +7.7 ± 3.8 | +1.0 ± 2.4 | +6.7 ± 4.9 |
+| swap − tom_memory | −5.8 ± 4.4 | +6.4 ± 3.0 | −12.2 ± 5.4 |
+| placebo − tom_memory | −7.1 ± 4.3 | −1.4 ± 3.2 | −5.7 ± 5.7 |
+
+- **Partial view makes tom_memory useful.** With a full view, ToM + memory does nothing here
+  (−0.8). With a partial view it gains +10.6, and neither ToM nor memory alone does (+2.9, +2.7).
+- **Partial view costs the LLM more than the scripted reference.** Score minus reference falls
+  from −21 to −40 for `direct`, but only from −22 to −29 for `tom_memory`. tom_memory recovers
+  about 11 of `direct`'s 18-point loss.
+- **Partner-specific? Not established.**
+  - With a partial view, swap and placebo both lose about 6–7 vs tom_memory; neither loss is
+    significant alone.
+  - The −12.2 change is half driven by swap doing *better* than tom_memory with a full view
+    (+6.4 ± 3.0).
+  - The largest gains and swap losses are on `steady` (no fixed habit; +22.5 ± 4.3 tom_memory −
+    direct change) and `favourite_dish` (+19.5 ± 9.3). So the gain is not specific to order habits.
+- **The probe never identifies the order habit:** `orders` accuracy 0.17–0.21 in every condition
+  and both views. That is the level of one fixed answer right for one of the five partners.
+- **Next checks (no new runs):**
+  - the analyze report's order-habit table (does the ego leave the carrot soup to
+    `favourite_dish`? does it take older orders with `newest_first`?), and the most common `orders` answer;
+  - the tom_memory notes under partial view (what do they say that helps?).
+
 ## 4. Current conclusion
 
 ToM + memory consistently improves an LLM's teamwork with a stable simulated human:
+- **With order habits and two open orders** (§3.7), it helps only under a partial view:
+  +11.4 ± 4.3 more than with a full view. Partner-specificity is not established there.
 - **When the map fixes the roles,** the gain is general skill.
 - **When roles are free,** part of the gain is partner-specific. The clearest case is a
   serve-preferring partner: the agent recognises the preference, gives the serving work to the
@@ -172,21 +206,6 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
    `configs/coop/days_llm_orders.yaml` (`open2_env`, 2 open orders, radius 2, all controls).
 3. **A second model**, to check generality.
 4. **Later:** partners that change over days; an LLM-simulated or human partner as a realism check.
-
-## 6b. Planned: does partial view make tom_memory more useful? (set up 2026-11-13)
-
-No LLM run so far used partial view: every result in §3 has a full view and one open order.
-The scripted screen (§3.6) suggests that knowing the partner pays more with a partial view
-together with several orders.
-
-- **Main pair:** `days_llm_orders.yaml` (radius 2) vs `days_llm_orders_full.yaml` (full view),
-  same code, same personas, seeds and episodes.
-- **Analysis:** `python -m coop.compare outputs/days_orders outputs/days_orders_full`.
-- **Quantities of interest:**
-  - the change in `tom_memory - direct`: does ToM + memory help more with a partial view?
-  - the change in `tom_memory_swap - tom_memory`: is more of that gain partner-specific?
-- **Optional second pair** (partial view alone, original partner types, one order):
-  `days_llm.yaml --layout open_env --run-seeds 0 1 2 3`, with and without `--view-radius 2`.
 
 ## 7. Where things are
 
