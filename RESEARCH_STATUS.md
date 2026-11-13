@@ -100,7 +100,7 @@ The agent learns to wait for hand-overs: longer waits, ended by partner actions,
 - **The probe agrees:** `serve_first`'s preference was recognised 0.85 with its own memory, vs
   0.25–0.40 otherwise.
 
-### 3.5 Division of labour (open replication)
+### 3.5 Division of labour (open replication; the `serve_first` part did not replicate, see §3.9)
 - **`serve_first`:** the overlap fell from 75 (`direct`) to **55** (`tom_memory`), −19.4 ± 3.5.
   - swap: +8.9 ± 2.3 vs `tom_memory`; placebo: +8.5 ± 2.1.
   - The partner's serving share rose from 36% to 57%, and the agent's serving fell from 21% to 15%.
@@ -186,6 +186,45 @@ all six conditions. A = radius 2, B = full view; otherwise identical. `coop.comp
   - Does the ToM text track the partner's order? Score the `tom` "partner" sentences against the
     dish the partner was really working on (offline, from `partner_truth.json`).
 
+### 3.9 Open kitchen, third run with the fixed probe (`days_probe_open`, 2026-11-13)
+Same setting as `days_ctrl_open_rep`: `open_env`, 1 order, full view, 7 default personas × 4 seeds.
+The code differs: the new probe has a pace line and new options, which also changes the reflection.
+
+| comparison (run SE) | ctrl_open (2 seeds) | ctrl_open_rep | **probe_open** |
+|---|---|---|---|
+| tom_memory − direct | +13.2 ± 3.1 | +12.0 ± 2.9 | **+13.9 ± 2.0** |
+| tom − direct | | | +8.4 ± 2.5 |
+| memory − direct | | | −3.1 ± 2.2 |
+| swap − tom_memory | −7.3 ± 2.9 | −5.6 ± 1.9 | **−4.6 ± 2.2** |
+| placebo − tom_memory | −5.3 ± 3.5 | −4.5 ± 2.2 | **−4.6 ± 1.9** |
+
+- **The score result replicates a third time.** ToM gives about +8. Memory adds about +5 on top,
+  but only with the agent's own notes: swap and placebo fall back to the `tom` level.
+- **Which partners show the swap loss changes between runs** (per persona SE 4–7):
+  - this run: `slow` −14.5, `leaves_unfinished` −12.5, `prep_first` −11;
+  - before: `prep_first` −15, `serve_first` −11.
+
+  `prep_first` is the only partner with a swap loss in both runs.
+- **The `serve_first` hand-over did not replicate as partner-specific.**
+  - The overlap still falls (direct 74.7 → tom_memory 61.5), but `tom` alone does the same
+    (62.6), and so do swap (59.6) and placebo (60.8).
+  - Here the hand-over comes from ToM, not from memory about this partner.
+  - `prep_first` now shows a small partner-specific split instead: overlap swap +3.3 ± 0.9 and
+    placebo +4.7 ± 1.0 vs tom_memory. It showed none before.
+  - So partner-specific division of labour is not robust across runs.
+- **Probe with the new rules:**
+  - **speed works:** `slow` is recognised 0.88–0.97 (pace line 0%), and the preference partners are
+    now "normal" (`prep_first` 1.00, `serve_first` 0.88–1.00);
+  - **avoids:** `avoids_board` is recognised 1.00, even by `direct`. But `serve_first` and `slow` are
+    often said to avoid the board, and they may really not use it (scored against the trait, not
+    behaviour);
+  - **commitment** (`leaves_unfinished` 0.00–0.07) and **gives_way** (`yielding` 0.00) are never
+    detected;
+  - **prefers:** `prep_first` 0.95–1.00, `serve_first` 0.38 (direct) → 0.68 (memory, tom_memory).
+    Partners with no preference are often called "cook";
+  - **swapped notes carry over into the probe:** with notes from the `slow` partner, `serve_first`
+    is called slow (speed 0.17). The answers lean on memory, not only on the episode.
+
 ### 3.8 How ToM and memory were implemented so far (important for reading §3)
 - **`tom`:** one or two free sentences about the partner before each action. They are never shown
   again, so nothing builds up within an episode.
@@ -210,9 +249,11 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
   - The score gain is largest with `steady`, though, so its source is not yet known.
   - The probe never names an order habit.
 - **When the map fixes the roles,** the gain is general skill.
-- **When roles are free,** part of the gain is partner-specific. The clearest case is a
-  serve-preferring partner: the agent recognises the preference, gives the serving work to the
-  partner, and scores better. These line up only with memory about *that* partner.
+- **When roles are free** (open kitchen, one order; replicated three times, §3.4 and §3.9):
+  - ToM gives about +8, and the agent's own notes add about +5.
+  - Swapped or neutral notes lose that extra part, so it needs notes about *this* partner.
+  - *Which* behaviour carries it is not stable. The `serve_first` hand-over was partner-specific
+    in one run (§3.5) but came from ToM alone in the next (§3.9).
 
 ## 5. Caveats
 
