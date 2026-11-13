@@ -13,6 +13,11 @@ Probe rules (2026-11-12):
   carried item (``abandon_rate``) puts it on a counter, which looks exactly like a
   hand-over, so it is not scored (truth ``None``).
 
+* ``orders`` (the order habit) is asked only with several open orders, over
+  ``order_options``: oldest / newest open order, the dish served last, a favourite
+  dish (one option per dish of the episode), or no fixed habit. A partner that does
+  whatever is needed next (no ``order_commit``) has no fixed habit.
+
 Fields whose truth is ``None`` are left out of the score.
 """
 from __future__ import annotations
@@ -57,14 +62,29 @@ def avoid_options(kitchen, dishes: Iterable[str]) -> List[str]:
     return [name for kind, name in STATION_NAMES.items() if kind in need and kind in shared]
 
 
-def probe_fields(avoid_opts: Optional[List[str]] = None) -> Dict[str, List[str]]:
-    """The fields and options asked in one probe (``avoids`` depends on the episode)."""
+ORDER_HABITS = {"first": "its oldest open order", "last": "the newest open order",
+                "same_dish": "the dish it served last"}
+NO_ORDER_HABIT = "no fixed habit"
+
+
+def order_options(dishes: Iterable[str]) -> List[str]:
+    """Options of the ``orders`` field for an episode with these dishes ordered."""
+    return (list(ORDER_HABITS.values()) + [f"favourite dish: {d}" for d in dict.fromkeys(dishes)]
+            + [NO_ORDER_HABIT])
+
+
+def probe_fields(avoid_opts: Optional[List[str]] = None,
+                 order_opts: Optional[List[str]] = None) -> Dict[str, List[str]]:
+    """The fields and options asked in one probe (``avoids`` and ``orders`` depend on the
+    episode; ``orders`` is asked only when ``order_opts`` is given)."""
     fields = dict(PROFILE_FIELDS)
     if avoid_opts is not None:
         if avoid_opts:
             fields["avoids"] = list(avoid_opts) + ["nothing"]
         else:
             del fields["avoids"]
+    if order_opts:
+        fields["orders"] = list(order_opts)
     return fields
 
 
@@ -113,6 +133,11 @@ PROFILE_GUIDE = (
     "you do the rest, is a preference, not slowness.\n"
     '- reliability: "makes mistakes" if items your partner put into utensils matched no recipe and '
     "were thrown away.\n"
+    '- orders (only with several open orders): which open order your partner worked on. "its '
+    'oldest open order" / "the newest open order" if they stuck to one order, picked that way, until '
+    'it was served; "the dish it served last" if after serving a dish they took an order for the same '
+    'dish; "favourite dish: <dish>" if they went for orders of one dish whenever there was one; "no '
+    'fixed habit" if they did whatever was needed next for any order.\n'
     '- commitment: "leaves tasks unfinished" if your partner often left a job half done and walked '
     "away to something else: a utensil they loaded and did not start, or finished food they did not "
     "take out. Putting an item on a counter is a normal hand-over, not a sign of this.\n"
@@ -124,11 +149,25 @@ def _trait(traits, name, default=None):
     return traits.get(name, default) if isinstance(traits, dict) else getattr(traits, name, default)
 
 
-def truth_profile(traits, avoid_opts: Optional[List[str]] = None) -> Dict[str, Optional[str]]:
+def order_truth(traits, dishes: Iterable[str]) -> str:
+    """The order habit an observer should name, given the dishes ordered this episode
+    (a favourite dish that was never ordered cannot be seen)."""
+    if not _trait(traits, "order_commit", False):
+        return NO_ORDER_HABIT
+    dishes = set(dishes)
+    fav = [d for d in (_trait(traits, "favourite_dishes", ()) or ()) if d in dishes]
+    if fav:
+        return f"favourite dish: {fav[0]}"
+    return ORDER_HABITS[_trait(traits, "order_focus", "first") or "first"]
+
+
+def truth_profile(traits, avoid_opts: Optional[List[str]] = None,
+                  order_dishes: Optional[List[str]] = None) -> Dict[str, Optional[str]]:
     """The answer a perfect observer should give for a partner with these traits (a
     ``Traits`` or its dict). ``avoid_opts``: the utensils ``avoids`` asked about
-    (``avoid_options``); None = all utensils (no episode context). ``None`` values are
-    not scored."""
+    (``avoid_options``); None = all utensils (no episode context). ``order_dishes``:
+    the dishes ordered in an episode with several open orders (``orders`` is scored
+    only then). ``None`` values are not scored."""
     avoid = [STATION_NAMES[k] for k in _trait(traits, "avoid_stations", ()) or ()]
     if avoid_opts is None:
         avoids: Optional[str] = avoid[0] if avoid else "nothing"
@@ -151,6 +190,7 @@ def truth_profile(traits, avoid_opts: Optional[List[str]] = None) -> Dict[str, O
                   else "normal"),
         "reliability": "makes mistakes" if (_trait(traits, "slip_rate", 0) or 0) > 0 else "reliable",
         "commitment": commitment,
+        "orders": order_truth(traits, order_dishes) if order_dishes else None,
     }
 
 

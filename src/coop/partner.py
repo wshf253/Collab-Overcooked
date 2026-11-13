@@ -25,6 +25,13 @@ Traits (see :class:`Traits`) change how jobs are chosen and executed:
 * **commitment**: ``abandon_rate`` is the per-step chance of dropping the current
   job. A held item is put on the nearest free counter, and the job is not taken
   up again for ``abandon_cooldown`` steps.
+* **order habit** (with several open orders): ``order_focus`` picks which open
+  order's jobs come first: the oldest (``first``), the newest (``last``), or one
+  for the dish it delivered last (``same_dish``, else the oldest).
+  ``favourite_dishes`` puts orders for those dishes before all others. With
+  ``order_commit`` it commits to one open order (chosen by that habit) and only
+  works on its dish until it is delivered; after ``COMMIT_PATIENCE`` steps with
+  nothing to do on it, it helps elsewhere until its order has work again.
 
 With no job (or while waiting for a preferred one) the partner steps off cells in
 front of a station, and after a blocked move it gives way at random (seeded).
@@ -52,6 +59,8 @@ from .nav import (Pos, Unstick, access_cells, facing, floor_cells, reach, step_a
 
 STAGES = ("prep", "cook", "serve")
 HELD_WAIT = 5      # steps to wait holding an item with nowhere to put it before setting it down
+COMMIT_PATIENCE = 8  # order_commit: idle steps on the own order before helping with another
+ORDER_FOCUS = ("first", "last", "same_dish")
 UTENSIL_STAGE = {"chopping_board": "prep", "blender": "prep", "pot": "cook", "oven": "cook"}
 
 
@@ -68,8 +77,11 @@ class Traits:
     avoid_stations: Tuple[str, ...] = ()   # utensil kinds it does not use (if the other player can)
     unfinished_rate: float = 0.0       # chance of walking away from starting a loaded utensil or
                                        # taking finished food out of one
-    order_focus: str = "first"         # with several open orders: work on the oldest ("first")
-                                       # or the newest ("last") first
+    order_focus: str = "first"         # with several open orders: work on the oldest ("first"),
+                                       # the newest ("last"), or the dish delivered last ("same_dish")
+    favourite_dishes: Tuple[str, ...] = ()  # orders for these dishes first (listed order), then
+                                            # order_focus decides
+    order_commit: bool = False         # stick to one open order (by the habit above) until delivered
 
     def __post_init__(self):
         unknown = set(self.preference) - set(STAGES)
@@ -83,8 +95,10 @@ class Traits:
         for name in ("slip_rate", "abandon_rate", "unfinished_rate"):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
-        if self.order_focus not in ("first", "last"):
-            raise ValueError("order_focus must be 'first' or 'last'")
+        if self.order_focus not in ORDER_FOCUS:
+            raise ValueError(f"order_focus must be one of {ORDER_FOCUS}")
+        if len(set(self.favourite_dishes)) != len(self.favourite_dishes):
+            raise ValueError("favourite_dishes must be distinct")
         unknown = set(self.avoid_stations) - set(UTENSIL_STAGE)
         if unknown:
             raise ValueError(f"avoid_stations must be utensil kinds from {sorted(UTENSIL_STAGE)}: {unknown}")
@@ -108,11 +122,22 @@ PERSONAS: Dict[str, Traits] = {
     # to see (sloppy) or looked like normal hand-overs (flaky).
     "sloppy": Traits(slip_rate=0.3),
     "flaky": Traits(abandon_rate=0.08),
+    # Order habits: only visible with several open orders. Each commits to one open order
+    # and works on it until it is delivered (every type above does whatever is needed
+    # next, oldest order first).
+    "oldest_first": Traits(order_commit=True),
+    "newest_first": Traits(order_focus="last", order_commit=True),
+    # baked_carrot_soup: the one dish that needs the oven; it is in the default menu.
+    "favourite_dish": Traits(favourite_dishes=("baked_carrot_soup",), order_commit=True),
+    # After delivering a dish, takes an open order for the same dish if there is one.
+    "repeats_dish": Traits(order_focus="same_dish", order_commit=True),
 }
 
 # The partner types experiments use by default.
 DEFAULT_PERSONAS = ["steady", "prep_first", "serve_first", "slow", "yielding", "avoids_board",
                     "leaves_unfinished"]
+# For runs with several open orders: the oldest-first baseline and the three order habits.
+ORDER_PERSONAS = ["steady", "oldest_first", "newest_first", "favourite_dish", "repeats_dish"]
 
 
 @dataclass(frozen=True)
@@ -188,12 +213,19 @@ class SimulatedHuman:
         self._last_other: Optional[Pos] = None
         self.explore_target: Optional[Pos] = None
         self.held_wait = 0
+        self.last_dish: Optional[str] = None     # dish this player delivered last (same_dish)
+        self.committed: Optional[str] = None     # order_commit: dish of the order it works on
+        self.commit_waited = 0
+        self._held_name: Optional[str] = None
 
     def act(self, state, t: int) -> Tuple[Any, Any]:
         """Return (primitive action, interaction parameter) for this step."""
         if self.belief is not None:
             state = self.belief.update(state, t)
         self._look(state)
+        if t > 0 and (state.ml_actions[self.index] or "").startswith("deliver"):
+            self.last_dish = self._held_name
+        self._held_name = self.me.held_object.name if self.me.held_object is not None else None
         jobs = self._jobs()
         if self.job is not None:
             current = next((j for j in jobs if j.key == self.job.key), None)
@@ -261,10 +293,16 @@ class SimulatedHuman:
         self.job, self.slip, self.slip_decided, self.delay_left = None, None, False, 0
         self.held_wait = 0
 
-    def _rank(self, job: Job) -> Tuple[int, int]:
+    def _rank(self, job: Job) -> Tuple[int, int, int, int]:
         pref = self.traits.preference
         stage = pref.index(job.stage) if job.stage in pref else len(pref)
-        return stage, (job.order if self.traits.order_focus == "first" else -job.order)
+        orders = self.state.order_list or []
+        dish = orders[job.order] if job.order < len(orders) else None
+        fav = self.traits.favourite_dishes
+        favourite = fav.index(dish) if dish in fav else len(fav)
+        focus = self.traits.order_focus
+        same = 0 if focus != "same_dish" or dish == self.last_dish else 1
+        return stage, favourite, same, (-job.order if focus == "last" else job.order)
 
     def _explore(self):
         """Walk towards the station seen longest ago, keeping that target until it is in view
@@ -295,6 +333,15 @@ class SimulatedHuman:
             return Job("put_down", held.name, "other"), ""
         if not open_jobs:
             return None, "no_job"
+        if self.traits.order_commit:
+            target = self._commit_target()
+            own = [j for j in open_jobs if target in self._job_dishes.get(j.key, ())]
+            if own:
+                open_jobs, self.commit_waited = own, 0
+            elif self.commit_waited < COMMIT_PATIENCE:
+                self.commit_waited += 1
+                return None, "waiting_on_order"
+            # else: patience used up, help with another order until its own has work again
         if self.traits.yield_tasks:
             free = [j for j in open_jobs if not self._claimed(j)]
             if not free:
@@ -319,6 +366,27 @@ class SimulatedHuman:
             return None, "reluctant"
         self.waited = 0
         return best, ""
+
+    def _dish(self, job: Job) -> Optional[str]:
+        orders = self.state.order_list or []
+        return orders[job.order] if job.order < len(orders) else None
+
+    def _commit_target(self) -> Optional[str]:
+        """The dish of the order this player is committed to; a new one is picked by its
+        habit once the old one is no longer open."""
+        n = max(1, getattr(self.mdp, "num_open_orders", 1))
+        open_dishes = list(self.state.order_list[:n]) if self.state.order_list else []
+        if self.committed not in open_dishes:
+            fav, focus = self.traits.favourite_dishes, self.traits.order_focus
+
+            def key(i):
+                d = open_dishes[i]
+                return (fav.index(d) if d in fav else len(fav),
+                        0 if focus != "same_dish" or d == self.last_dish else 1,
+                        -i if focus == "last" else i)
+            self.committed = open_dishes[min(range(len(open_dishes)), key=key)] if open_dishes else None
+            self.commit_waited = 0
+        return self.committed
 
     def _finishing(self, job: Job) -> bool:
         """Jobs that finish a step someone started: starting a loaded utensil, or taking
@@ -389,8 +457,10 @@ class SimulatedHuman:
         if not orders:
             return []
         out, keys = [], set()
+        self._job_dishes: Dict[tuple, set] = {}     # job key -> dishes of the open orders it serves
         for i, order in enumerate(orders[:max(1, getattr(self.mdp, "num_open_orders", 1))]):
             for job in self._needs(order, None, frozenset()):
+                self._job_dishes.setdefault(job.key, set()).add(order)
                 if job.key not in keys:
                     keys.add(job.key)
                     out.append(replace(job, order=i) if i else job)

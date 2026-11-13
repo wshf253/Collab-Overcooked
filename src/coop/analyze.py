@@ -20,6 +20,10 @@ Reports, per condition and persona:
 * division of labour: each player's completed work split into prep / cook /
   serve (the probe's stage definitions), and how much the two mixes overlap,
   compared with direct and tom_memory over runs;
+* order habits (runs with several open orders): who delivered which orders. For
+  each player, the share of its deliveries that skipped an older open order
+  ("newer"), and, against a partner with a favourite dish, the ego's share of that
+  dish's deliveries; both compared with direct / tom_memory over runs;
 * LLM health: calls per episode, invalid replies, fallbacks, thinking or
   truncated replies, latency.
 
@@ -40,7 +44,7 @@ REFERENCE = "_reference"
 from .kitchen import Kitchen
 from .profile import PROFILE_FIELDS, avoid_options, legacy_answer, score_profile, truth_profile
 
-FIELDS = tuple(PROFILE_FIELDS)
+FIELDS = tuple(PROFILE_FIELDS) + ("orders",)     # orders: asked with several open orders
 
 
 def _mean_se(xs: List[float]) -> Dict[str, Optional[float]]:
@@ -78,6 +82,14 @@ def _kitchen(layout: str, ego: int, dishes: List[str]) -> Kitchen:
     return _KITCHENS[(layout, ego)]
 
 
+def _traits(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The partner's true traits for this episode (read once, from partner_truth.json)."""
+    if "traits" not in e:
+        path = e["dir"] / "partner_truth.json"
+        e["traits"] = json.loads(path.read_text())["traits"] if path.exists() else None
+    return e["traits"]
+
+
 def rescore_probe(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The episode's probe scored with the current rules (None without a probe)."""
     s = e["summary"]
@@ -87,12 +99,14 @@ def rescore_probe(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     truth_path = e["dir"] / "partner_truth.json"
     if not truth_path.exists():
         return probe
-    traits = json.loads(truth_path.read_text())["traits"]
+    traits = _traits(e)
     dishes = [o["name"] for o in s.get("orders", [])]
     if not dishes:
         return probe
     avoid = avoid_options(_kitchen(s["layout"], s.get("ego_index", 0), dishes), dishes)
-    out = score_profile(legacy_answer(probe["answer"], avoid), truth_profile(traits, avoid))
+    several = s.get("open_orders", 1) > 1 and "orders" in probe["answer"]
+    out = score_profile(legacy_answer(probe["answer"], avoid),
+                        truth_profile(traits, avoid, dishes if several else None))
     for k in ("shares", "true_shares", "share_error"):
         if k in probe:
             out[k] = probe[k]
@@ -357,6 +371,7 @@ def analyse(out: Path) -> Dict[str, Any]:
                 report["overall"][cond][f"vs_{other}_runs"] = _paired_runs(allc, get)
     report["dishes"] = dish_table(eps)
     report["labour"] = labour_table(out, eps, conditions)
+    report["orders"] = order_table(eps, conditions)
     return report
 
 
@@ -409,6 +424,80 @@ def labour_table(out: Path, eps: List[Dict[str, Any]], conditions: List[str]) ->
                 "all": _mean_se([statistics.fmean(x) for x in per_run.values()]),
                 "personas": {p: _mean_se([statistics.fmean(x) for x in runs.values()])
                              for p, runs in per_persona.items()}}
+    return table
+
+
+# ---------------------------------------------------------------------- #
+# Order habits (from summary.json orders: who delivered what, and when)
+# ---------------------------------------------------------------------- #
+def order_stats(summary: Dict[str, Any], favourite: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Per episode with several open orders: each player's deliveries, the share that
+    skipped an older open order, and the ego's share of ``favourite``-dish deliveries."""
+    if summary.get("open_orders", 1) <= 1:
+        return None
+    ego = summary.get("ego_index", 0)
+    orders = summary.get("orders", [])
+    done = [o for o in orders if o.get("completed_t") is not None]
+    out: Dict[str, Any] = {}
+    for who, idx in (("ego", ego), ("partner", 1 - ego)):
+        mine = [o for o in done if o.get("delivered_by") == idx]
+        newer = [o for o in mine if any(
+            r["index"] < o["index"] and r["issued_t"] <= o["completed_t"]
+            and (r.get("completed_t") is None or r["completed_t"] > o["completed_t"]) for r in orders)]
+        out[who] = {"deliveries": len(mine), "newer_share": len(newer) / len(mine) if mine else None}
+    out["ego_delivery_share"] = out["ego"]["deliveries"] / len(done) if done else None
+    if favourite:
+        fav = [o for o in done if o["name"] == favourite]
+        rest = [o for o in done if o["name"] != favourite]
+        out["ego_favourite_share"] = (sum(o.get("delivered_by") == ego for o in fav) / len(fav)) if fav else None
+        out["ego_other_share"] = (sum(o.get("delivered_by") == ego for o in rest) / len(rest)) if rest else None
+    return out
+
+
+ORDER_METRICS = ("ego_newer", "partner_newer", "ego_delivery_share", "ego_favourite_share")
+
+
+def order_table(eps: List[Dict[str, Any]], conditions: List[str]) -> Dict[str, Any]:
+    """condition -> persona -> mean order-habit metrics; plus differences vs direct /
+    tom_memory with SE over runs (persona x seed)."""
+    stats = {}
+    for e in eps:
+        traits = _traits(e) or {}
+        fav = (traits.get("favourite_dishes") or [None])[0]
+        st = order_stats(e["summary"], fav)
+        if st:
+            stats[(e["condition"], e["persona"], e["seed"], e["day"], e["episode"])] = {
+                "ego_newer": st["ego"]["newer_share"], "partner_newer": st["partner"]["newer_share"],
+                "ego_delivery_share": st["ego_delivery_share"],
+                "ego_favourite_share": st.get("ego_favourite_share"),
+                "ego_other_share": st.get("ego_other_share")}
+    if not stats:
+        return {}
+    table: Dict[str, Any] = {"rows": {}, "vs": {}}
+    for cond in list(conditions) + [REFERENCE]:
+        rows = {}
+        for persona in sorted({k[1] for k in stats}):
+            mine = [v for k, v in stats.items() if k[0] == cond and k[1] == persona]
+            if mine:
+                rows[persona] = {m: _mean_se([v[m] for v in mine])["mean"]
+                                 for m in ORDER_METRICS + ("ego_other_share",)}
+                rows[persona]["episodes"] = len(mine)
+        if rows:
+            table["rows"][cond] = rows
+    for cond in conditions:
+        for other in COMPARE_TO:
+            if other == cond or other not in conditions:
+                continue
+            for metric in ("ego_newer", "ego_favourite_share"):
+                per_persona: Dict[str, Dict[int, List[float]]] = defaultdict(lambda: defaultdict(list))
+                for k, v in stats.items():
+                    o = stats.get((other,) + k[1:])
+                    if k[0] == cond and o and v[metric] is not None and o[metric] is not None:
+                        per_persona[k[1]][k[2]].append(v[metric] - o[metric])
+                if per_persona:
+                    table["vs"].setdefault(cond, {}).setdefault(other, {})[metric] = {
+                        p: _mean_se([statistics.fmean(x) for x in runs.values()])
+                        for p, runs in per_persona.items()}
     return table
 
 
@@ -487,6 +576,27 @@ def format_report(rep: Dict[str, Any]) -> str:
             for other, d in vs.items():
                 per = ", ".join(f"{p} {_fmt(v)}" for p, v in sorted(d["personas"].items()))
                 lines.append(f"  {cond} - {other}: {_fmt(d['all'])}  [{per}]")
+    orders = rep.get("orders") or {}
+    if orders.get("rows"):
+        pct = lambda x: "-" if x is None else f"{100 * x:.0f}"
+        pct_ms = lambda ms: ("-" if not ms or ms["mean"] is None else f"{100 * ms['mean']:+.0f}"
+                             + (f"±{100 * ms['se']:.0f}" if ms.get("se") is not None else ""))
+        lines.append("\n== order habits (several open orders): who delivered which orders (%) ==")
+        lines.append("  newer = deliveries that skipped an older open order; fav = the ego's share of the "
+                     "partner's favourite dish (other = of the other dishes)")
+        lines.append(f"  {'condition/persona':<36}{'ego newer':>10}{'partner newer':>14}{'ego share':>10}"
+                     f"{'ego fav':>8}{'ego other':>10}")
+        for cond, rows in orders["rows"].items():
+            for persona, r in rows.items():
+                lines.append(f"  {cond + '/' + persona:<36}{pct(r['ego_newer']):>10}{pct(r['partner_newer']):>14}"
+                             f"{pct(r['ego_delivery_share']):>10}{pct(r['ego_favourite_share']):>8}"
+                             f"{pct(r['ego_other_share']):>10}")
+        lines.append("  differences in percentage points (mean±SE over runs):")
+        for cond, vs in orders.get("vs", {}).items():
+            for other, metrics in vs.items():
+                for metric, per in metrics.items():
+                    cells = ", ".join(f"{p} {pct_ms(v)}" for p, v in sorted(per.items()))
+                    lines.append(f"    {cond} - {other}, {metric}: {cells}")
     lines.append("\n== partner probe: accuracy per field (most common answer; truth), current rules ==")
     lines.append("  (a field shown with n= was scored in fewer episodes: avoids only where a needed utensil "
                  "is reachable by both; pace = observed share of actions followed by another)")

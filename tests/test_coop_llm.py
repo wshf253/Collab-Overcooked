@@ -249,7 +249,7 @@ class LLMAgentTests(unittest.TestCase):
         probe = self.ep("direct", 1, 1, "summary.json")["probe"]
         self.assertEqual(probe["truth"], {"prefers": "no clear preference", "avoids": None,
                                           "gives_way": "does not give way", "speed": "normal",
-                                          "reliability": "reliable", "commitment": None})
+                                          "reliability": "reliable", "commitment": None, "orders": None})
         self.assertEqual(set(probe["correct"]), {"prefers", "gives_way", "speed", "reliability"})
         self.assertAlmostEqual(probe["accuracy"], 1.0)
         self.assertAlmostEqual(self.res["table"]["direct"]["flaky"]["1"]["probe_accuracy"], 1.0)

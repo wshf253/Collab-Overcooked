@@ -168,7 +168,8 @@ class MockBackend(Backend):
         if "PARTNER_PROFILE_PROBE" in last:
             out = {"partner_profile": {"prefers": "no clear preference", "avoids": "nothing",
                                        "gives_way": "does not give way", "speed": "normal",
-                                       "reliability": "reliable", "commitment": "finishes tasks"},
+                                       "reliability": "reliable", "commitment": "finishes tasks",
+                                       "orders": "no fixed habit"},
                    "stage_shares": {"prep": 34, "cook": 33, "serve": 33},
                    "notes": "mock notes"}
         else:

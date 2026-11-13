@@ -27,6 +27,10 @@ improve teamwork, and is the gain about **this partner** or just general skill?
   - **Original types:** `steady`, `prep_first`, `serve_first`, `slow`, `sloppy` (slips), `flaky` (abandons).
   - **Added 2026-11-10:** `yielding`, `avoids_board`, `leaves_unfinished`. These replaced
     `sloppy`/`flaky` in the default lists; both are still defined.
+  - **Order habits, added 2026-11-12** (`ORDER_PERSONAS`; only visible with several open orders):
+    `oldest_first`, `newest_first`, `favourite_dish` (baked_carrot_soup), `repeats_dish`. Each
+    commits to one open order until it is delivered. Every other type does whatever is needed
+    next, oldest order first.
 - **Agent:** Qwen3.8-27B via vLLM (temperature 0, thinking off). It uses Collab-Overcooked's actions,
   which an executor turns into moves. It sees only public information: the map, the recipes, the
   orders, utensils, counters, both players' positions and held items, and the actions the partner
@@ -115,8 +119,17 @@ The agent learns to wait for hand-overs: longer waits, ended by partner actions,
 - **Several open orders and/or a partial view:** almost all gains vanish on the new seeds. The one
   consistent case is `slow` on `open2_env` with 2 orders and radius 2: +22.5 on the selection seeds,
   +40 on the new seeds.
-- **This is a lower bound.** No scripted policy predicts the partner, and every partner type serves
-  the oldest order first.
+- **This is a lower bound.** No scripted policy predicts the partner, and every partner type above
+  serves the oldest order first.
+- **Order habits** (2 open orders, 8 + 8 seeds; `--ego-set`):
+  - **Flexible egos** ("do whatever is needed next"): value about 0 against every habit.
+  - **Egos that commit to one order** (closer to an LLM planning its own order): the right order
+    depends on the partner. On `open2_env`, full view: `commit_newest` 180 with `newest_first` vs
+    217.5 with `oldest_first`, and `commit_oldest` the reverse.
+  - **Re-measured value of the commit set:** `open2_env` radius 2: `newest_first` +35,
+    `oldest_first` +25; full view: `newest_first` +17.5; `open_env` about 0 (one utensil of each
+    kind: both orders compete for it).
+  - Preliminary (8 seeds); the 16-seed screen is the next run.
 
 ## 4. Current conclusion
 
@@ -154,9 +167,9 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 
 1. ~~Probe label fixes~~ (done 2026-11-12). The pace line and the new options change the
    reflection prompt, so memory conditions can behave differently: new runs need a new `--out`.
-2. **Order-habit partners** (e.g. `newest_first`, `same_dish_first`), so the best response depends on
-   the partner. Then the value screen with 16+ seeds, then LLM runs with several open orders and
-   radius 2, with the controls.
+2. **Order-habit partners**: implemented 2026-11-12 (`ORDER_PERSONAS`, the probe's `orders` field, and the
+   "order habits" table in `coop.analyze`). Still to run: the value screen with 16+ seeds, then
+   `configs/coop/days_llm_orders.yaml` (`open2_env`, 2 open orders, radius 2, all controls).
 3. **A second model**, to check generality.
 4. **Later:** partners that change over days; an LLM-simulated or human partner as a realism check.
 
@@ -172,4 +185,5 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 | analysis | `src/coop/analyze.py` |
 | scripted screens | `src/coop/screen.py` (partner types), `src/coop/voi.py` (value of knowing) |
 | serving script | `scripts/run_qwen38_days.sh` |
+| order-habit LLM config | `configs/coop/days_llm_orders.yaml` |
 | server output folders | `~/work/collab-overcooked/outputs/days_llm_v2`, `days_llm_open`, `days_llm_open2`, `days_ctrl_split`, `days_ctrl_open`, `days_ctrl_open_rep` |

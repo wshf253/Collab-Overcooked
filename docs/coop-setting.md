@@ -66,6 +66,7 @@ Behaviour is set by `Traits`:
 | speed | `step_period`, `decision_delay` | acts on every n-th step; pauses before each new job |
 | reliability | `slip_rate` | a raw-ingredient job may take a wrong ingredient into the utensil; starting the spoiled batch makes the env discard it |
 | commitment | `abandon_rate`, `abandon_cooldown` | may drop its current job, leaving any held item on a counter, and won't take that job again for a while |
+| order habit | `order_focus` (`first` / `last` / `same_dish`), `favourite_dishes`, `order_commit` | with several open orders: which order's jobs come first (oldest, newest, the dish it delivered last; favourite dishes before all). With `order_commit` it sticks to one open order, chosen by that habit, until it is delivered; after 8 idle steps on it (`COMMIT_PATIENCE`) it helps elsewhere until its order has work again |
 
 Personas (`coop.partner.PERSONAS`), each changing one trait from `steady`, all
 stable (the same traits every day):
@@ -79,6 +80,17 @@ stable (the same traits every day):
 | `avoids_board` | never uses the chopping board when the other player can reach one (on `new_env` only the partner can, so it still cuts there) |
 | `leaves_unfinished` | half the time walks away from starting a loaded utensil or from taking finished food out, and leaves it for 15 steps |
 | `sloppy`, `flaky` | slips / abandons jobs; kept for later tests, not in the default lists (their traits were hard to see or looked like hand-overs) |
+| `oldest_first` | commits to the oldest open order until it is delivered |
+| `newest_first` | commits to the newest open order |
+| `favourite_dish` | commits to `baked_carrot_soup` (the one dish that needs the oven) whenever it is open, else the oldest |
+| `repeats_dish` | after delivering a dish, commits to an open order for the same dish if there is one, else the oldest |
+
+The order-habit types differ from `steady` only with several open orders.
+`coop.partner.ORDER_PERSONAS` is `steady` plus these four. Every other type does
+whatever is needed next, oldest order first. Measured with a `steady` teammate,
+2 open orders, 3–6 seeds: `favourite_dish` spends 87–88% of its work on the carrot
+soup when it is open (`steady` 51%), and `oldest_first` 10–15% on the newest
+order (`steady` 28–41%).
 
 `coop.partner.DEFAULT_PERSONAS` (used by the configs) is the first seven. The
 probe asks about six fields: `prefers`, `avoids`, `gives_way`, `speed`,
@@ -195,6 +207,24 @@ The best policies are chosen on `--seeds` (0–7) and re-measured on
 `--eval-seeds` (8–15). Picking the best of 16 policies on the same episodes
 overstates the gain, so trust the re-measured value.
 
+**Ego sets** (`--ego-set`, with several open orders): `flexible` egos take
+whatever job is needed next: the 16 above, plus `any+leave_<dish>` (that dish's
+orders last). `commit` egos work on one order at a time: `commit_oldest`,
+`commit_newest` (each with or without giving way), and `commit_oldest+leave_<dish>`.
+`all` (the default) uses both. The commit set is closer to an agent that plans its
+own order, such as an LLM choosing macro actions.
+
+**Order habits** (`--personas order`, 2 open orders, 8 + 8 seeds):
+- **Flexible egos:** knowing the partner is worth about 0. Doing whatever is needed
+  next for either order adapts to every habit.
+- **Committed egos:** the right order depends on the partner. On `open2_env`, full
+  view: `commit_newest` scores 180 with `newest_first` but 217.5 with `oldest_first`,
+  and `commit_oldest` 217.5 vs 187.5. Re-measured values (commit set, new seeds):
+  `open2_env` radius 2: `newest_first` +35, `oldest_first` +25; `open2_env` full
+  view: `newest_first` +17.5, `favourite_dish` +7.5; `open_env`: about 0 or negative
+  (one utensil of each kind makes the two orders compete for the same stations).
+  Run 16+ seeds before quoting these.
+
 Result, one open order, full view (8 seeds, 300 steps): `value` is at most +7.5
 points (less than half an order) for every persona on all three maps, and 0 for
 most.
@@ -233,6 +263,7 @@ PYTHONPATH=src:lib/overcooked_ai python -m coop.days configs/coop/days_smoke.yam
   | `days_default.yaml` | scripted ego, 6 personas × 3 run seeds × 5 days × 3 episodes |
   | `days_llm_mock.yaml` | LLM ego with the offline mock backend (pipeline check, meaningless scores) |
   | `days_llm.yaml` | LLM ego (Qwen via vLLM), 4 conditions × 6 personas × 2 run seeds × 5 days × 2 episodes |
+  | `days_llm_orders.yaml` | order habits: `open2_env`, 2 open orders, radius 2, `ORDER_PERSONAS` × 4 run seeds, all 6 conditions; swap donors with the opposite habit |
 
   `agent` is the base ego. `conditions` maps names to overrides of it (nested
   dicts merge one level), e.g. `tom: {tom: true}`. `custom_personas` defines
@@ -323,6 +354,12 @@ the same abilities and there are no messages.
   - `commitment` is about visibly unfinished work (`leaves_unfinished`). Abandoning a
     carried item (`flaky`) puts it on a counter, which looks exactly like a hand-over,
     so `flaky`'s commitment is not scored (truth `None`).
+  - `orders` (the order habit) is asked only with several open orders. Its options
+    are "its oldest open order", "the newest open order", "the dish it served last",
+    "favourite dish: <dish>" (one per dish ordered in the episode) and "no fixed
+    habit". A partner without `order_commit` has no fixed habit. A favourite dish
+    that was never ordered that episode can't be seen, so the truth is then
+    "its oldest open order". The order list in every observation is marked "oldest first".
   - Fields with truth `None` are left out of `accuracy`. `coop.analyze` rescores every
     probe with the current rules (from `partner_truth.json` and the episode's orders), so
     older output folders are read the same way. Old "abandons tasks" answers count as
@@ -375,6 +412,13 @@ For an LLM run, prints:
   an overlap index (sum over stages of min(ego %, partner %): 100 = same mix, 0 =
   fully split) and its difference vs `direct` / `tom_memory` per persona (SE
   over runs). Hand-overs (`place_obj_on_counter`) are counted separately;
+- order habits (several open orders, from `summary.json`): for each player, the
+  share of its deliveries that skipped an older open order ("newer"), the ego's
+  share of all deliveries, and, against `favourite_dish`, the ego's share of the
+  favourite dish's deliveries vs the other dishes. `ego_newer` and the favourite
+  share are compared with `direct` / `tom_memory` (SE over runs). An ego that adapts
+  should deliver older orders more often with `newest_first`, newer ones with
+  `oldest_first`, and leave the carrot soup to `favourite_dish`;
 - LLM health: calls, invalid replies, fallbacks, thinking/truncated replies.
 
 ## Run on the lab server
@@ -494,6 +538,18 @@ lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python 
 ```
 ```bash
 lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.screen --layout open2_env --out outputs/coop_screen_open2.json
+```
+
+Order habits, value of knowing the partner (16 selection + 16 new seeds; CPU):
+
+```bash
+lab-run --new --gpus 0 -- env PYTHONPATH=src:lib/overcooked_ai .venv/bin/python -m coop.voi --layout open2_env --open-orders 2 --view-radius 2 --personas order --ego-set commit --seeds 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 --eval-seeds 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 --out outputs/voi_orders_open2_r2_commit.json
+```
+
+Order habits with the LLM ego (all six conditions):
+
+```bash
+lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm_orders.yaml --out outputs/days_orders --workers 48
 ```
 
 ## Not built yet

@@ -150,7 +150,7 @@ class POPipelineTests(unittest.TestCase):
             self.assertIn("What you can see: only cells within 2 steps", log["system_prompt"])
             self.assertIn("Up to 2 orders are open at once", log["system_prompt"])
             users = "".join(c["user"] for c in log["calls"])
-            self.assertIn("Open orders:", users)
+            self.assertIn("Open orders (oldest first):", users)
             self.assertTrue("not seen yet" in users or "last seen at t=" in users)
 
         finally:

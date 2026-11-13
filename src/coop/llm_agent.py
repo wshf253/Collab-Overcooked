@@ -29,7 +29,8 @@ from .agents import Agent, register_agent
 from .executor import MAX_WAIT, Executor, parse_macro
 from .kitchen import Kitchen, held_text
 from .llm import Usage, build_backend, parse_json
-from .profile import PROFILE_GUIDE, PaceCounter, avoid_options, clean_profile, clean_shares, probe_fields
+from .profile import (PROFILE_GUIDE, PaceCounter, avoid_options, clean_profile, clean_shares, order_options,
+                      probe_fields)
 from .view import Belief
 
 GRAMMAR = f"""\
@@ -250,7 +251,7 @@ class LLMAgent(Agent):
         lines = [f"Time step {t} of {self.context['horizon']}. Score {self.score:+g}. "
                  f"Orders completed: {self.orders_done}.",
                  (f"Current order: {dish(orders[0])}" if n_open == 1 and orders else
-                  "Open orders: " + (", ".join(dish(o) for o in orders) or "none")),
+                  "Open orders (oldest first): " + (", ".join(dish(o) for o in orders) or "none")),
                  f"You: at {tuple(me.position)}, holding {held_text(me.held_object)}."]
         seen = self.belief is not None
         if seen and not getattr(other, "visible", True):
@@ -360,7 +361,8 @@ class LLMAgent(Agent):
         events = "\n".join(self.events) or "(none)"
         dishes = [o["name"] for o in result.get("orders", [])]
         avoid = avoid_options(self.kitchen, dishes) if self.kitchen is not None else []
-        fields = probe_fields(avoid)
+        several = self.context.get("open_orders", 1) > 1
+        fields = probe_fields(avoid, order_options(dishes) if several and dishes else None)
         options = ", ".join(f'"{k}": ' + " | ".join(f'"{o}"' for o in v) for k, v in fields.items())
         user = (
             "PARTNER_PROFILE_PROBE\n"

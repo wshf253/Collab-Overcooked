@@ -274,8 +274,9 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     probe = agent_log.get("probe") if isinstance(agent_log, dict) else None
     # Truth for this episode: avoids is asked only over utensils the orders needed and
     # both players can reach (computed here from the map and orders, not from the agent).
-    avoid = avoid_options(Kitchen(env.mdp, ego, start), [o["name"] for o in summary["orders"]])
-    truth = truth_profile(traits, avoid)
+    dishes = [o["name"] for o in summary["orders"]]
+    avoid = avoid_options(Kitchen(env.mdp, ego, start), dishes)
+    truth = truth_profile(traits, avoid, dishes if cfg.open_orders > 1 else None)
     if probe and probe.get("partner_profile"):
         summary["probe"] = score_profile(probe["partner_profile"], truth,
                                          probe.get("stage_shares"),
