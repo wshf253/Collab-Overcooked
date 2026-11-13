@@ -306,31 +306,39 @@ def ep_dir_for(run_dir: Path, day: int, episode: int) -> Path:
 
 
 PLACEBO_SENTENCES = (
-    "Orders are listed oldest first, and a correct delivery opens a new one.",
+    "Orders are opened one at a time and the next one appears after a correct delivery.",
     "Raw ingredients come from the ingredient dispenser and dishes from the dish dispenser.",
     "A utensil has to be started after it is loaded, and it takes a few steps to finish.",
     "Some dishes are served on a dish and others are served without one.",
     "Each counter holds one item, and items can be left on counters.",
     "A correct delivery gives 20 points and a wrong delivery costs points.",
 )
+# With several open orders the first sentence above is false; this one replaces it there.
+PLACEBO_MANY_ORDERS = "Orders are listed oldest first, and a correct delivery opens a new one."
 
 
-def placebo_text(length: int) -> str:
+def placebo_sentences(open_orders: int = 1) -> tuple:
+    return PLACEBO_SENTENCES if open_orders <= 1 else (PLACEBO_MANY_ORDERS,) + PLACEBO_SENTENCES[1:]
+
+
+def placebo_text(length: int, open_orders: int = 1) -> str:
     """Neutral kitchen facts (all already in the rules) of about ``length`` characters."""
+    sentences = placebo_sentences(open_orders)
     out, i = "", 0
     while len(out) < length:
-        out = (out + " " if out else "") + PLACEBO_SENTENCES[i % len(PLACEBO_SENTENCES)]
+        out = (out + " " if out else "") + sentences[i % len(sentences)]
         i += 1
     cut = out[:length]
     return cut.rsplit(" ", 1)[0] if " " in cut and len(out) > length else cut
 
 
-def placebo_model(model: str) -> str:
+def placebo_model(model: str, open_orders: int = 1) -> str:
     """A partner-model file with the same headings and about the same length, holding
     neutral kitchen facts instead of anything about the partner."""
-    body = max(len(model) - sum(len(h) + 2 for h in MODEL_SECTIONS), 3 * len(PLACEBO_SENTENCES[0]))
-    sentences = [s if s.endswith(".") else s + "." for s in re.split(r"(?<=\.) ", placebo_text(body)) if s]
-    parts = [sentences[i::len(MODEL_SECTIONS)] or [PLACEBO_SENTENCES[i]] for i in range(len(MODEL_SECTIONS))]
+    base = placebo_sentences(open_orders)
+    body = max(len(model) - sum(len(h) + 2 for h in MODEL_SECTIONS), 3 * len(base[0]))
+    sentences = [s if s.endswith(".") else s + "." for s in re.split(r"(?<=\.) ", placebo_text(body, open_orders)) if s]
+    parts = [sentences[i::len(MODEL_SECTIONS)] or [base[i]] for i in range(len(MODEL_SECTIONS))]
     return "\n\n".join(h + "\n" + "\n".join(f"- {s}" for s in p) for h, p in zip(MODEL_SECTIONS, parts))
 
 
@@ -365,8 +373,8 @@ def given_memory(cfg: DaysConfig, out: Path, condition: str, persona: str, run_s
     if src["type"] == "placebo":
         notes = [{"day": n["day"], "episode": n["episode"],
                   "profile": {k: None for k in (n.get("profile") or {})},
-                  "notes": placebo_text(len(n.get("notes") or ""))} for n in notes]
-        model = placebo_model(model) if model else model
+                  "notes": placebo_text(len(n.get("notes") or ""), cfg.open_orders)} for n in notes]
+        model = placebo_model(model, cfg.open_orders) if model else model
     return {"notes": copy.deepcopy(notes), "partner_model": model, "memory_source": src["type"],
             "source": {"condition": src["from"], "persona": donor, "after": list(prev)}}
 

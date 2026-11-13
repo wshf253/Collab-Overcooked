@@ -106,7 +106,8 @@ class PipelineTests(unittest.TestCase):
         self.assertIn(donor, swap)
         placebo = self.ep("tom_struct_model_placebo", 2, "agent_log.json")["system_prompt"]
         self.assertIn("Your partner model", placebo)
-        self.assertIn("Orders are listed oldest first", placebo)
+        self.assertIn("Orders are listed oldest first", placebo)        # 2 open orders
+        self.assertNotIn("one at a time", placebo)
         self.assertNotIn("mock habit", placebo)
 
     def test_reads_are_scored(self):

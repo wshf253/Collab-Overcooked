@@ -142,16 +142,28 @@ PROFILE_GUIDE = (
     "you do the rest, is a preference, not slowness.\n"
     '- reliability: "makes mistakes" if items your partner put into utensils matched no recipe and '
     "were thrown away.\n"
-    '- orders (only with several open orders): which open order your partner worked on. "its '
-    'oldest open order" / "the newest open order" if they stuck to one order, picked that way, until '
-    'it was served; "the dish it served last" if after serving a dish they took an order for the same '
-    'dish; "favourite dish: <dish>" if they went for orders of one dish whenever there was one; "no '
-    'fixed habit" if they did whatever was needed next for any order.\n'
     '- commitment: "leaves tasks unfinished" if your partner often left a job half done and walked '
     "away to something else: a utensil they loaded and did not start, or finished food they did not "
     "take out. Putting an item on a counter is a normal hand-over, not a sign of this.\n"
     "- stage_shares: your estimate of how your partner's work split between prep, cook and serve "
     "(percentages that add up to 100).")
+
+# Added to the guide only when the orders field is asked (several open orders), so the
+# one-order probe is word for word the one used before order habits existed.
+ORDERS_GUIDE = (
+    '- orders (only with several open orders): which open order your partner worked on. "its '
+    'oldest open order" / "the newest open order" if they stuck to one order, picked that way, until '
+    'it was served; "the dish it served last" if after serving a dish they took an order for the same '
+    'dish; "favourite dish: <dish>" if they went for orders of one dish whenever there was one; "no '
+    'fixed habit" if they did whatever was needed next for any order.\n')
+
+
+def profile_guide(fields: Dict[str, List[str]]) -> str:
+    """The answer guide for the fields asked in one probe."""
+    if "orders" not in fields:
+        return PROFILE_GUIDE
+    at = PROFILE_GUIDE.index("- commitment:")
+    return PROFILE_GUIDE[:at] + ORDERS_GUIDE + PROFILE_GUIDE[at:]
 
 
 def _trait(traits, name, default=None):

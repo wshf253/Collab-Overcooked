@@ -110,6 +110,12 @@ class ControlConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):      # a swap needs another persona to take notes from
             controls_config(personas=["steady"])
 
+    def test_placebo_text_is_true_for_the_setting(self):
+        one, many = placebo_text(400), placebo_text(400, open_orders=2)
+        self.assertIn("one at a time", one)          # true with one open order (the original text)
+        self.assertNotIn("one at a time", many)
+        self.assertIn("listed oldest first", many)
+
     def test_placebo_text(self):
         self.assertEqual(placebo_text(0), "")
         t = placebo_text(200)

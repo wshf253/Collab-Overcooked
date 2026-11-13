@@ -237,7 +237,11 @@ The code differs: the new probe has a pace line and new options, which also chan
   - one partner-model file the agent rewrites after every episode.
 - **Placebo text fixed 2026-11-13:** one placebo sentence said orders open "one at a time". That is
   false with 2 open orders, so the placebo in `days_orders` / `days_orders_full` included one wrong
-  rule. It now says "Orders are listed oldest first, and a correct delivery opens a new one."
+  rule. With several open orders it now says "Orders are listed oldest first, and a correct
+  delivery opens a new one." One-order runs keep the original (true) sentence.
+- **One-order runs are unchanged by the 2026-11-12/13 work.** Every prompt is word for word the
+  same as at `15eaeea`, checked by playing the same config on both commits with the mock backend.
+  So `days_probe_open` (started at `15eaeea`) can be finished with `--allow-code-change`.
 
 ## 4. Current conclusion
 

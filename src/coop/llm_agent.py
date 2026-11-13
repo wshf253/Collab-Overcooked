@@ -40,8 +40,8 @@ from .agents import Agent, register_agent
 from .executor import MAX_WAIT, Executor, parse_macro
 from .kitchen import Kitchen, held_text
 from .llm import Usage, build_backend, parse_json
-from .profile import (MODEL_SECTIONS, PROFILE_GUIDE, PaceCounter, avoid_options, clean_profile, clean_shares,
-                      order_options, probe_fields)
+from .profile import (MODEL_SECTIONS, PaceCounter, avoid_options, clean_profile, clean_shares,
+                      order_options, probe_fields, profile_guide)
 from .view import Belief
 
 GRAMMAR = f"""\
@@ -459,7 +459,7 @@ class LLMAgent(Agent):
             + ("Utensils asked about under avoids (this episode's orders needed them and both of you "
                f"can reach them): {', '.join(avoid)}.\n" if avoid else
                "No utensil was both needed and reachable by both of you, so avoids is not asked.\n")
-            + f"{PROFILE_GUIDE}\n"
+            + f"{profile_guide(fields)}\n"
             + (self._model_request() if self.model_mode else "")
             + f'Reply with JSON only: {{"partner_profile": {{{options}}}, "stage_shares": {{"prep": <percent>, '
             '"cook": <percent>, "serve": <percent>}, '
