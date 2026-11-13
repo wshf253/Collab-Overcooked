@@ -287,7 +287,11 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
    "order habits" table in `coop.analyze`). Still to run: the value screen with 16+ seeds, then
    `configs/coop/days_llm_orders.yaml` (`open2_env`, 2 open orders, radius 2, all controls).
 3. **A second model**, to check generality.
-4. **Later:** partners that change over days; an LLM-simulated or human partner as a realism check.
+4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
+   test harness for the pipeline, not the partner for the actual experiments. Don't refine the
+   scripted personas or probe labels further. The experimental partner will be an LLM-simulated
+   human, designed from papers that use LLMs as simulated humans or partners. Then partners that
+   change over days, and human partners as a realism check.
 
 ## 7. Where things are
 

@@ -11,5 +11,8 @@
   CPU jobs `lab-run --new --gpus 0 -- ...`; LLM jobs via `scripts/run_qwen38_days.sh`; when more
   than one GPU job runs at once use `lab-run --new --spare --gpus 1` (with `--cpus 24 --mem 110G`
   each for up to three parallel jobs). Give each command in its own `bash` block.
+- The scripted partner (`coop.partner`) and its probe are a test harness; the experimental
+  partner will be an LLM-simulated human (see `RESEARCH_STATUS.md` §6). Fix bugs in them, but
+  don't spend effort refining their personas or probe labels.
 - Keep runs comparable: compare conditions only within one output folder (`code_version.json`
   refuses resumes across code changes); a behaviour change means a new `--out`.
