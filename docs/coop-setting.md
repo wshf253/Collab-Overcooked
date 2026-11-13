@@ -264,6 +264,7 @@ PYTHONPATH=src:lib/overcooked_ai python -m coop.days configs/coop/days_smoke.yam
   | `days_llm_mock.yaml` | LLM ego with the offline mock backend (pipeline check, meaningless scores) |
   | `days_llm.yaml` | LLM ego (Qwen via vLLM), 4 conditions × 6 personas × 2 run seeds × 5 days × 2 episodes |
   | `days_llm_orders.yaml` | order habits: `open2_env`, 2 open orders, radius 2, `ORDER_PERSONAS` × 4 run seeds, all 6 conditions; swap donors with the opposite habit |
+  | `days_llm_model.yaml` | stronger partner modelling (structured ToM, partner-model file) in the `days_llm_orders` setting: direct, tom_memory, tom_struct, tom_model, tom_struct_model + swap / placebo |
   | `days_llm_orders_full.yaml` | the same with a full view (a test keeps the two identical otherwise): the comparison arm for partial view |
 
   `agent` is the base ego. `conditions` maps names to overrides of it (nested
@@ -367,6 +368,23 @@ the same abilities and there are no messages.
     "leaves tasks unfinished", and an old `avoids` answer naming a utensil outside the
     current options counts as "nothing". Old runs had no pace line, so their speed
     answers are not comparable to new ones.
+- **Partner modelling options** (LLM agent; the defaults keep the original conditions):
+
+  | option | values | what the agent gets |
+  |---|---|---|
+  | `tom_mode` (with `tom`) | `free` (default) | one or two sentences about the partner before each action, never shown again |
+  | | `structured` | fields before each action: `doing`, `order` (the open order the partner works on, or none / unknown), `next` (the action it will complete next), `habit`. The last read is shown at the next decision ("Your last read of your partner (t=..)"), so it can be checked and corrected within the episode |
+  | `memory_mode` (with `memory`) | `notes` (default) | the last `max_memory_notes` reflections (profile + up to 80 words) as a list |
+  | | `model` | one markdown file about the partner with three sections (Habits (with evidence) / What works with them / Open questions), at most `model_words` words. The agent rewrites the whole file after every episode (keep what holds, correct what was wrong, add evidence), in the same call as the probe (`model_max_tokens`). It is shown in every later episode and is all the agent remembers about the partner |
+
+  Swap and placebo work on the file too: swap gives the donor's file, placebo a file
+  with the same headings and length holding neutral kitchen facts (`placebo_model`).
+  `coop.analyze` scores structured reads against the truth ("structured ToM" table).
+  `order` is compared with the dish of the order the partner really works on: its job's
+  order, or the order it is committed to, or "none" when idle. The baseline always
+  names the oldest open order. `next` is compared with the partner's next completed
+  action (exact, and same verb). The baseline repeats its last action. Both are given
+  per persona and per day. The partner trace now logs each step's `dish` and `committed`.
 - **Memory controls** (conditions with `memory_source`, run after their source
   condition, from its finished runs):
 
@@ -474,6 +492,20 @@ model with vLLM inside the job, checks that thinking is off, runs `coop.days`,
 and stops the server. It uses the same variables as ICRL4AHT's
 `run_qwen38_coop.sh` (`LLM_MODEL_PATH`, `LLM_SERVE_ENV`, `MAX_NUM_SEQS`,
 `GPU_MEM`, ...; with `ICRL_LLM_BASE_URL` set, it uses that server instead).
+
+**API models** (any OpenAI-compatible endpoint): skip the serving script and set the
+backend variables yourself (the key stays in the environment, never in a config):
+
+```bash
+export ICRL_LLM_BASE_URL=https://<provider>/v1 ICRL_LLM_MODEL=<model name> ICRL_LLM_API_KEY=<key>
+```
+```bash
+PYTHONPATH=src:lib/overcooked_ai python -m coop.days configs/coop/days_llm_model.yaml --out outputs/days_model_<model> --workers 8
+```
+
+Leave `COOP_CHAT_TEMPLATE_KWARGS` unset (it is a vLLM option). Use few workers to stay
+under the provider's rate limits. The requests send `temperature` and a per-call
+`seed`. Not yet tried against a hosted API; if a provider rejects `seed`, tell me.
 
 Small first run (one condition, one persona, 2 days × 1 short episode):
 

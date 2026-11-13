@@ -186,6 +186,20 @@ all six conditions. A = radius 2, B = full view; otherwise identical. `coop.comp
   - Does the ToM text track the partner's order? Score the `tom` "partner" sentences against the
     dish the partner was really working on (offline, from `partner_truth.json`).
 
+### 3.8 How ToM and memory were implemented so far (important for reading §3)
+- **`tom`:** one or two free sentences about the partner before each action. They are never shown
+  again, so nothing builds up within an episode.
+- **`memory`:** the last 5 end-of-episode reflections (fixed profile options + 80 words) as a list.
+  Nothing is revised or merged, and evidence older than 5 episodes drops out.
+- **Added 2026-11-13** (`tom_mode: structured`, `memory_mode: model`; config `days_llm_model.yaml`,
+  not run yet):
+  - a structured read each decision (`doing` / `order` / `next` / `habit`), carried to the next
+    decision and scored offline against the partner's true order and next action;
+  - one partner-model file the agent rewrites after every episode.
+- **Placebo text fixed 2026-11-13:** one placebo sentence said orders open "one at a time". That is
+  false with 2 open orders, so the placebo in `days_orders` / `days_orders_full` included one wrong
+  rule. It now says "Orders are listed oldest first, and a correct delivery opens a new one."
+
 ## 4. Current conclusion
 
 ToM + memory consistently improves an LLM's teamwork with a stable simulated human:

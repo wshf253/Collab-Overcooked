@@ -732,6 +732,8 @@ class SimulatedHuman:
                                          tuple(self.other.position))
         self.trace.append({"t": t, "status": status,
                            "job": self.job.describe() if self.job else None,
+                           "dish": self._dish(self.job) if self.job else None,   # dish of the job's order
+                           "committed": self.committed,                         # order_commit only
                            "action": action if isinstance(action, str) else list(action),
                            "parameter": parm})
         return action, parm

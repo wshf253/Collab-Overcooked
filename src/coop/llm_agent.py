@@ -9,6 +9,17 @@ Conditions (agent config keys):
 * ``memory``: after each episode, the agent reflects on its partner. The profile
   and notes are kept (the last ``max_memory_notes``) and shown in every later
   episode's system prompt.
+* ``tom_mode`` (with ``tom``): ``"free"`` (default) is the one or two sentences
+  above. ``"structured"`` asks for fields: what the partner is ``doing``, which open
+  ``order`` they work on, the action they will complete ``next``, and their
+  ``habit``. The last read is shown again at the next decision, so it can be built up
+  and corrected within the episode. ``order`` and ``next`` are scored offline
+  against the partner's true job and next action (``coop.analyze``).
+* ``memory_mode`` (with ``memory``): ``"notes"`` (default) keeps the last
+  ``max_memory_notes`` reflections as a list. ``"model"`` keeps one markdown file
+  about the partner (sections in ``coop.profile.MODEL_SECTIONS``, at most
+  ``model_words`` words) that the agent rewrites after every episode: keep what
+  holds, correct what was wrong, add evidence. It is shown in every later episode.
 * ``probe``: after each episode, the agent rates its partner on four traits
   (``partner_profile``). This is scored against the true persona for evaluation.
   With ``memory`` on, the probe is the same call as the reflection. With memory
@@ -29,8 +40,8 @@ from .agents import Agent, register_agent
 from .executor import MAX_WAIT, Executor, parse_macro
 from .kitchen import Kitchen, held_text
 from .llm import Usage, build_backend, parse_json
-from .profile import (PROFILE_GUIDE, PaceCounter, avoid_options, clean_profile, clean_shares, order_options,
-                      probe_fields)
+from .profile import (MODEL_SECTIONS, PROFILE_GUIDE, PaceCounter, avoid_options, clean_profile, clean_shares,
+                      order_options, probe_fields)
 from .view import Belief
 
 GRAMMAR = f"""\
@@ -55,15 +66,52 @@ HANDOVER_RULES = (
     "picked up by hand: hold a dish and use fill_dish_with_food.")
 
 
+TOM_MODES = ("free", "structured")
+MEMORY_MODES = ("notes", "model")
+READ_FIELDS = ("doing", "order", "next", "habit")
+
+
+def clean_read(raw: Any) -> Optional[Dict[str, str]]:
+    """A structured partner read as short strings (a plain string counts as ``doing``)."""
+    if isinstance(raw, str) and raw.strip():
+        raw = {"doing": raw}
+    if not isinstance(raw, dict):
+        return None
+    out = {k: str(raw.get(k, "")).strip()[:200] for k in READ_FIELDS}
+    return out if any(out.values()) else None
+
+
+def bound_words(text: str, limit: int) -> Tuple[str, bool]:
+    """Keep whole lines until ``limit`` words (a little slack); True if lines were cut."""
+    if len(text.split()) <= limit * 1.25:
+        return text, False
+    out, n = [], 0
+    for line in text.splitlines():
+        w = len(line.split())
+        if n + w > limit and not line.startswith("#"):
+            continue
+        out.append(line)
+        n += w
+    return "\n".join(out), True
+
+
 class LLMAgent(Agent):
     name = "llm"
 
     def __init__(self, backend: Dict[str, Any], tom: bool = False, memory: bool = False,
                  probe: bool = True, max_memory_notes: int = 5, max_tokens: int = 300,
-                 probe_max_tokens: int = 500, partner_log_lines: int = 15, retry_invalid: bool = True):
+                 probe_max_tokens: int = 500, partner_log_lines: int = 15, retry_invalid: bool = True,
+                 tom_mode: str = "free", memory_mode: str = "notes", model_words: int = 200,
+                 model_max_tokens: int = 1000):
+        if tom_mode not in TOM_MODES or memory_mode not in MEMORY_MODES:
+            raise ValueError(f"tom_mode must be one of {TOM_MODES}, memory_mode one of {MEMORY_MODES}")
         self.backend_spec = dict(backend)
         self.backend = build_backend(self.backend_spec, "ego")
         self.tom, self.use_memory, self.probe = tom, memory, probe
+        self.structured = tom and tom_mode == "structured"
+        self.model_mode = memory and memory_mode == "model"
+        self.tom_mode, self.memory_mode = tom_mode, memory_mode
+        self.model_words, self.model_max_tokens = model_words, model_max_tokens
         self.max_memory_notes, self.max_tokens, self.probe_max_tokens = max_memory_notes, max_tokens, probe_max_tokens
         self.partner_log_lines, self.retry_invalid = partner_log_lines, retry_invalid
         self.set_memory({})
@@ -98,6 +146,7 @@ class LLMAgent(Agent):
         self.invalid = self.fallbacks = 0
         self.probe_answer: Optional[Dict[str, Any]] = None
         self.call_index = 0
+        self.last_read: Optional[Tuple[int, Dict[str, str]]] = None   # structured ToM, this episode
         self.system = None
         self._last_macro = None
 
@@ -146,6 +195,11 @@ class LLMAgent(Agent):
             return
         answer = self._probe(result)
         self.probe_answer = answer
+        if self.model_mode:
+            if answer is not None and answer.get("partner_model"):
+                self.memory["partner_model"] = answer["partner_model"]
+                self.memory["model_updates"] = self.memory.get("model_updates", 0) + 1
+            return
         if self.use_memory and answer is not None:
             notes = self.memory.setdefault("notes", [])
             notes.append({"day": result["day"], "episode": result["episode"],
@@ -153,7 +207,8 @@ class LLMAgent(Agent):
             del notes[:-self.max_memory_notes]
 
     def episode_log(self):
-        return {"condition": {"tom": self.tom, "memory": self.use_memory, "probe": self.probe},
+        return {"condition": {"tom": self.tom, "memory": self.use_memory, "probe": self.probe,
+                              "tom_mode": self.tom_mode, "memory_mode": self.memory_mode},
                 "usage": self.usage.as_dict(), "invalid_actions": self.invalid, "fallbacks": self.fallbacks,
                 "decisions": self.decisions, "probe": self.probe_answer, "system_prompt": self.system,
                 "calls": self.calls}
@@ -204,7 +259,13 @@ class LLMAgent(Agent):
         k, ctx = self.kitchen, self.context
         menu = list(ctx["menu"])
         recipes = "\n\n".join(k.recipe_text(d) for d in menu)
-        if self.tom:
+        if self.structured:
+            reply = ('{"partner": {"doing": "<what your partner is doing now, a few words>", '
+                     '"order": "<the open order they are working on: its dish name, or \\"none\\" or '
+                     '\\"unknown\\">", "next": "<the action they will most likely complete next, written '
+                     'like an action, e.g. pickup(carrot, ingredient_dispenser)>", "habit": "<what they tend '
+                     'to do, one short sentence>"}, "action": "<one action>"}')
+        elif self.tom:
             reply = ('{"partner": "<one or two sentences: what your partner is doing now and what they tend '
                      'to do>", "action": "<one action>"}')
         else:
@@ -231,7 +292,15 @@ class LLMAgent(Agent):
                          "direction (including diagonals). For everything else you are told what you saw "
                          "there last and when; it may have changed since. Your partner's actions are known "
                          "only when you saw them. The orders are always visible.")
-        notes = self.memory.get("notes") if self.use_memory else None
+        if self.structured:
+            parts.append("Before each action, write down your current read of your partner. Your previous "
+                         "read is shown to you at the next decision: check it against what your partner did "
+                         "since, and correct it.")
+        model = self.memory.get("partner_model") if self.model_mode else None
+        if model:
+            parts.append("You have worked with this same partner before. Your partner model (a file you "
+                         "keep about this partner and rewrite after every episode):\n" + model)
+        notes = self.memory.get("notes") if self.use_memory and not self.model_mode else None
         if notes:
             lines = []
             for n in notes:
@@ -292,6 +361,10 @@ class LLMAgent(Agent):
             lines.append(f"  (last one {t - 1 - recent[-1][0]} step(s) ago)")
         else:
             lines.append("Your partner has not completed any action yet.")
+        if self.structured and self.last_read is not None:
+            rt, read = self.last_read
+            lines.append(f"Your last read of your partner (t={rt}): " +
+                         "; ".join(f"{k}: {read[k] or '-'}" for k in READ_FIELDS))
         if self.events:
             lines.append("Events: " + " | ".join(self.events[-5:]))
         mine = self.own_log[-5:]
@@ -336,8 +409,10 @@ class LLMAgent(Agent):
             m, reason = parse_macro(action) if isinstance(action, str) else (None, "no action in the reply")
             if m is not None:
                 reason = self.executor.check(m, state) or ""
-            record["attempts"].append({"action": action, "partner": (parsed or {}).get("partner"),
-                                       "error": reason})
+            read = (parsed or {}).get("partner")
+            record["attempts"].append({"action": action, "partner": read, "error": reason})
+            if self.structured and clean_read(read):
+                record["read"] = clean_read(read)
             if m is not None and not reason:
                 macro = m
                 break
@@ -349,6 +424,8 @@ class LLMAgent(Agent):
             self.fallbacks += 1
             macro, _ = parse_macro("wait(1)")
         record["chosen"] = str(macro)
+        if record.get("read"):
+            self.last_read = (t, record["read"])
         self.decisions.append(record)
         self._last_macro = macro
         self.executor.begin(macro)
@@ -383,19 +460,38 @@ class LLMAgent(Agent):
                f"can reach them): {', '.join(avoid)}.\n" if avoid else
                "No utensil was both needed and reachable by both of you, so avoids is not asked.\n")
             + f"{PROFILE_GUIDE}\n"
-            f'Reply with JSON only: {{"partner_profile": {{{options}}}, "stage_shares": {{"prep": <percent>, '
-            '"cook": <percent>, "serve": <percent>}, "notes": "<at most 80 words: what to do differently '
-            'with this partner next time>"}')
+            + (self._model_request() if self.model_mode else "")
+            + f'Reply with JSON only: {{"partner_profile": {{{options}}}, "stage_shares": {{"prep": <percent>, '
+            '"cook": <percent>, "serve": <percent>}, '
+            + ('"partner_model": "<the whole rewritten file, markdown, lines separated by \\n>"}'
+               if self.model_mode else
+               '"notes": "<at most 80 words: what to do differently with this partner next time>"}'))
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
-        parsed, _ = self._chat("probe", self.context["horizon"], messages, self.probe_max_tokens)
+        parsed, _ = self._chat("probe", self.context["horizon"], messages,
+                               self.model_max_tokens if self.model_mode else self.probe_max_tokens)
         if not parsed:
             return None
+        model, cut = None, False
+        if self.model_mode and isinstance(parsed.get("partner_model"), str) and parsed["partner_model"].strip():
+            model, cut = bound_words(parsed["partner_model"].strip(), self.model_words)
         notes = parsed.get("notes")
         return {"partner_profile": clean_profile(parsed.get("partner_profile"), fields),
                 "asked": {"avoids": avoid}, "pace": self.pace.share(),
+                "partner_model": model, "model_cut": cut,
                 "raw_profile": parsed.get("partner_profile"),
                 "stage_shares": clean_shares(parsed.get("stage_shares")),
                 "notes": notes if isinstance(notes, str) else ""}
+
+
+    def _model_request(self) -> str:
+        current = self.memory.get("partner_model")
+        return ("\nYOUR PARTNER MODEL SO FAR:\n"
+                + (current if current else "(none yet: this was your first episode with this partner)")
+                + "\n\nRewrite your partner model with what this episode showed: keep what still holds, "
+                "correct what was wrong, add new evidence (say which day and episode), and say what to do "
+                "with this partner next time. Use exactly these sections: " + ", ".join(MODEL_SECTIONS)
+                + f". At most {self.model_words} words. This file is all you will remember about your "
+                "partner.\n")
 
 
 register_agent("llm", LLMAgent)

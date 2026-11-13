@@ -172,6 +172,9 @@ class MockBackend(Backend):
                                        "orders": "no fixed habit"},
                    "stage_shares": {"prep": 34, "cook": 33, "serve": 33},
                    "notes": "mock notes"}
+            if "YOUR PARTNER MODEL SO FAR" in last:
+                out["partner_model"] = ("## Habits (with evidence)\n- mock habit\n\n## What works with them\n"
+                                        "- mock\n\n## Open questions\n- mock")
         else:
             valid = [a for a in _grab_list(last, "VALID_ACTIONS:") if not a.startswith("wait")]
             act = "wait(2)"
@@ -181,7 +184,11 @@ class MockBackend(Backend):
                     act = rng.choice(hits)
                     break
             out = {}
-            if '"partner"' in text:
+            if '"doing"' in text:
+                opened = re.search(r"Open orders \(oldest first\): ([\w_]+)", last)
+                out["partner"] = {"doing": "mock", "order": opened.group(1) if opened else "unknown",
+                                  "next": "pickup(dish, dish_dispenser)", "habit": "mock habit"}
+            elif '"partner"' in text:
                 out["partner"] = "mock belief"
             out["action"] = act
         s = json.dumps(out)

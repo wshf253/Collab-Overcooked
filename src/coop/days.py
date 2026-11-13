@@ -43,6 +43,7 @@ import copy
 import hashlib
 import io
 import json
+import re
 import shutil
 import statistics
 import sys
@@ -62,7 +63,7 @@ from .llm import build_backend
 from .orders import normalize_menu
 from .partner import PERSONAS, SimulatedHuman, Traits
 from .kitchen import Kitchen
-from .profile import avoid_options, score_profile, truth_profile
+from .profile import MODEL_SECTIONS, avoid_options, score_profile, truth_profile
 
 REFERENCE = "_reference"
 CONFIG_KEYS = {
@@ -305,7 +306,7 @@ def ep_dir_for(run_dir: Path, day: int, episode: int) -> Path:
 
 
 PLACEBO_SENTENCES = (
-    "Orders are opened one at a time and the next one appears after a correct delivery.",
+    "Orders are listed oldest first, and a correct delivery opens a new one.",
     "Raw ingredients come from the ingredient dispenser and dishes from the dish dispenser.",
     "A utensil has to be started after it is loaded, and it takes a few steps to finish.",
     "Some dishes are served on a dish and others are served without one.",
@@ -324,6 +325,15 @@ def placebo_text(length: int) -> str:
     return cut.rsplit(" ", 1)[0] if " " in cut and len(out) > length else cut
 
 
+def placebo_model(model: str) -> str:
+    """A partner-model file with the same headings and about the same length, holding
+    neutral kitchen facts instead of anything about the partner."""
+    body = max(len(model) - sum(len(h) + 2 for h in MODEL_SECTIONS), 3 * len(PLACEBO_SENTENCES[0]))
+    sentences = [s if s.endswith(".") else s + "." for s in re.split(r"(?<=\.) ", placebo_text(body)) if s]
+    parts = [sentences[i::len(MODEL_SECTIONS)] or [PLACEBO_SENTENCES[i]] for i in range(len(MODEL_SECTIONS))]
+    return "\n\n".join(h + "\n" + "\n".join(f"- {s}" for s in p) for h, p in zip(MODEL_SECTIONS, parts))
+
+
 def _previous(cfg: DaysConfig, day: int, ep: int) -> Optional[tuple]:
     if ep > 1:
         return day, ep - 1
@@ -336,25 +346,28 @@ def given_memory(cfg: DaysConfig, out: Path, condition: str, persona: str, run_s
                  day: int, ep: int) -> Dict[str, Any]:
     """Memory a control condition starts episode (day, ep) with.
 
-    swap:    the notes the source condition had built with a different partner
-             (the donor persona) after the same number of episodes.
-    placebo: the notes the source condition had built with this partner, replaced by
-             neutral text of the same length, and with no profile.
+    swap:    the notes (or partner-model file) the source condition had built with a
+             different partner (the donor persona) after the same number of episodes.
+    placebo: the notes (or file) the source condition had built with this partner,
+             replaced by neutral text of the same length, and with no profile.
     """
     src = cfg.memory_source(condition)
     prev = _previous(cfg, day, ep)
     if prev is None:
-        return {"notes": [], "memory_source": src["type"]}
+        return {"notes": [], "partner_model": None, "memory_source": src["type"]}
     donor = cfg.donors(condition)[persona] if src["type"] == "swap" else persona
     path = ep_dir_for(run_dir_for(out, src["from"], donor, run_seed), *prev) / "memory_after.json"
     if not path.exists():
         raise FileNotFoundError(f"{condition}: needs {path} (run the source condition first)")
-    notes = json.loads(path.read_text()).get("notes") or []
+    source = json.loads(path.read_text())
+    notes = source.get("notes") or []
+    model = source.get("partner_model")
     if src["type"] == "placebo":
         notes = [{"day": n["day"], "episode": n["episode"],
                   "profile": {k: None for k in (n.get("profile") or {})},
                   "notes": placebo_text(len(n.get("notes") or ""))} for n in notes]
-    return {"notes": copy.deepcopy(notes), "memory_source": src["type"],
+        model = placebo_model(model) if model else model
+    return {"notes": copy.deepcopy(notes), "partner_model": model, "memory_source": src["type"],
             "source": {"condition": src["from"], "persona": donor, "after": list(prev)}}
 
 

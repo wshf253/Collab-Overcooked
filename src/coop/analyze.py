@@ -24,6 +24,12 @@ Reports, per condition and persona:
   each player, the share of its deliveries that skipped an older open order
   ("newer"), and, against a partner with a favourite dish, the ego's share of that
   dish's deliveries; both compared with direct / tom_memory over runs;
+* structured ToM (``tom_mode: structured``): each decision's read of the partner
+  scored against the truth. ``order``: the dish of the order the partner was
+  really working on (its job's order, or the order it is committed to; "none" when
+  idle), with the always-the-oldest-order baseline. ``next``: the partner's next
+  completed action (exact, and same verb), with the repeat-its-last-action baseline.
+  By persona and by day;
 * LLM health: calls per episode, invalid replies, fallbacks, thinking or
   truncated replies, latency.
 
@@ -219,7 +225,7 @@ def _action_kind(action: Any) -> str:
     return f"{name}({re.sub(r'[0-9]+$', '', args[0]) if args and args[0] else ''})"
 
 
-COMPARE_TO = ("direct", "tom_memory")
+COMPARE_TO = ("direct", "tom_memory", "tom_struct_model")
 
 
 def _paired_runs(eps: List[Dict[str, Any]], other_score) -> Dict[str, Optional[float]]:
@@ -372,6 +378,7 @@ def analyse(out: Path) -> Dict[str, Any]:
     report["dishes"] = dish_table(eps)
     report["labour"] = labour_table(out, eps, conditions)
     report["orders"] = order_table(eps, conditions)
+    report["reads"] = read_table(eps)
     return report
 
 
@@ -425,6 +432,92 @@ def labour_table(out: Path, eps: List[Dict[str, Any]], conditions: List[str]) ->
                 "personas": {p: _mean_se([statistics.fmean(x) for x in runs.values()])
                              for p, runs in per_persona.items()}}
     return table
+
+
+# ---------------------------------------------------------------------- #
+# Structured ToM reads (agent_log decisions vs partner_truth trace and steps.jsonl)
+# ---------------------------------------------------------------------- #
+def _norm_dish(text: str) -> str:
+    t = str(text or "").strip().lower().replace(" (served on a dish)", "").strip(" .\"'")
+    return t or "unknown"
+
+
+def _norm_action(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "").lower())
+
+
+def _open_at(orders: List[Dict[str, Any]], t: int) -> List[Dict[str, Any]]:
+    """Orders open when the decision at step t was made (before step t)."""
+    return sorted((o for o in orders if o["issued_t"] <= t and (o.get("completed_t") is None or o["completed_t"] >= t)),
+                  key=lambda o: o["index"])
+
+
+def read_stats(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Score one episode's structured partner reads; None without reads."""
+    reads = [(d["t"], d["read"]) for d in e["log"].get("decisions") or [] if d.get("read")]
+    if not reads:
+        return None
+    truth_path, steps_path = e["dir"] / "partner_truth.json", e["dir"] / "steps.jsonl"
+    if not truth_path.exists() or not steps_path.exists():
+        return None
+    trace = {r["t"]: r for r in json.loads(truth_path.read_text()).get("trace", [])}
+    other = 1 - e["summary"].get("ego_index", 0)
+    done: Dict[int, str] = {}
+    with open(steps_path) as f:
+        for line in f:
+            s = json.loads(line)
+            if s["completed"][other]:
+                done[s["t"]] = s["completed"][other]
+    times = sorted(done)
+    orders = e["summary"].get("orders", [])
+    n_open = max(1, e["summary"].get("open_orders", 1))
+    st = Counter()
+    for t, read in reads:
+        st["n"] += 1
+        r = trace.get(t, {})
+        truth = r.get("dish") or r.get("committed") or "none"
+        answer = _norm_dish(read.get("order"))
+        opened = _open_at(orders, t)[:n_open]
+        if answer == "unknown":
+            st["order_unknown"] += 1
+        else:
+            st["order_answered"] += 1
+            st["order_correct"] += answer == truth
+        st["oldest_correct"] += bool(opened) and opened[0]["name"] == truth
+        nxt = next((done[x] for x in times if x >= t), None)
+        prev = next((done[x] for x in reversed(times) if x < t), None)
+        if nxt is not None:
+            st["next_n"] += 1
+            guess = _norm_action(read.get("next"))
+            st["next_exact"] += guess == _norm_action(nxt)
+            st["next_verb"] += guess.split("(")[0] == _norm_action(nxt).split("(")[0]
+            st["repeat_exact"] += prev is not None and _norm_action(prev) == _norm_action(nxt)
+    return dict(st)
+
+
+def read_table(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """condition -> persona (and -> day) -> accuracy of the structured partner reads."""
+    per: Dict[tuple, Counter] = defaultdict(Counter)
+    by_day: Dict[tuple, Counter] = defaultdict(Counter)
+    for e in eps:
+        st = read_stats(e)
+        if st:
+            per[(e["condition"], e["persona"])].update(st)
+            by_day[(e["condition"], e["day"])].update(st)
+
+    def rates(c: Counter) -> Dict[str, Optional[float]]:
+        div = lambda a, b: c[a] / c[b] if c[b] else None
+        return {"reads": c["n"], "order_acc": div("order_correct", "n"),
+                "order_acc_answered": div("order_correct", "order_answered"),
+                "order_unknown": div("order_unknown", "n"), "oldest_baseline": div("oldest_correct", "n"),
+                "next_exact": div("next_exact", "next_n"), "next_verb": div("next_verb", "next_n"),
+                "repeat_baseline": div("repeat_exact", "next_n")}
+    out: Dict[str, Any] = {"personas": defaultdict(dict), "days": defaultdict(dict)}
+    for (cond, persona), c in sorted(per.items()):
+        out["personas"][cond][persona] = rates(c)
+    for (cond, day), c in sorted(by_day.items()):
+        out["days"][cond][str(day)] = rates(c)
+    return {k: dict(v) for k, v in out.items()} if per else {}
 
 
 # ---------------------------------------------------------------------- #
@@ -576,6 +669,25 @@ def format_report(rep: Dict[str, Any]) -> str:
             for other, d in vs.items():
                 per = ", ".join(f"{p} {_fmt(v)}" for p, v in sorted(d["personas"].items()))
                 lines.append(f"  {cond} - {other}: {_fmt(d['all'])}  [{per}]")
+    reads = rep.get("reads") or {}
+    if reads.get("personas"):
+        pct = lambda x: "-" if x is None else f"{100 * x:.0f}"
+        lines.append("\n== structured ToM: the ego's reads of its partner vs the truth (%) ==")
+        lines.append("  order = dish of the order the partner really works on (oldest = always guess the oldest "
+                     "open order); next = its next completed action (repeat = guess its last action again)")
+        head = (f"{'reads':>7}{'order':>7}{'(answered)':>11}{'unknown':>8}{'oldest':>7}"
+                f"{'next':>6}{'verb':>6}{'repeat':>7}")
+        row = lambda r: (f"{r['reads']:>7}{pct(r['order_acc']):>7}{pct(r['order_acc_answered']):>11}"
+                         f"{pct(r['order_unknown']):>8}{pct(r['oldest_baseline']):>7}{pct(r['next_exact']):>6}"
+                         f"{pct(r['next_verb']):>6}{pct(r['repeat_baseline']):>7}")
+        lines.append(f"  {'condition/persona':<36}" + head)
+        for cond, rows in reads["personas"].items():
+            for persona, r in rows.items():
+                lines.append(f"  {cond + '/' + persona:<36}" + row(r))
+        lines.append("  by day (all personas):")
+        for cond, rows in reads["days"].items():
+            for day, r in rows.items():
+                lines.append(f"  {cond + ' day ' + day:<36}" + row(r))
     orders = rep.get("orders") or {}
     if orders.get("rows"):
         pct = lambda x: "-" if x is None else f"{100 * x:.0f}"

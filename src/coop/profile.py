@@ -38,6 +38,15 @@ STATION_KINDS = {v: k for k, v in STATION_NAMES.items()}
 LEGACY_ANSWERS = {"commitment": {"abandons tasks": "leaves tasks unfinished"}}
 
 
+# Partner-model file (LLM agent, memory_mode "model"): one markdown file the agent
+# rewrites after every episode, shown in every later episode.
+MODEL_SECTIONS = ("## Habits (with evidence)", "## What works with them", "## Open questions")
+
+
+def model_template() -> str:
+    return "\n\n".join(f"{h}\n- (nothing yet)" for h in MODEL_SECTIONS)
+
+
 def needed_kinds(kitchen, dishes: Iterable[str]) -> set:
     """Utensil kinds needed to make these dishes (every step of every recipe)."""
     out: set = set()

@@ -1,0 +1,68 @@
+# Stronger partner modelling: structured ToM and a partner-model file, in the setting
+# where tom_memory helped (days_llm_orders.yaml: open2_env, 2 open orders, radius 2,
+# order-habit partners).
+#   direct            action only (baseline)
+#   tom_memory        the original ToM sentence + rolling notes (earlier baseline)
+#   tom_struct        structured read of the partner each decision (doing / order / next /
+#                     habit), the last read shown again at the next decision; no memory
+#   tom_model         the original ToM sentence + a partner-model file rewritten after
+#                     every episode (instead of rolling notes)
+#   tom_struct_model  both new parts
+#   tom_struct_model_swap / _placebo: controls for tom_struct_model (the file from a
+#                     partner with a different habit / a neutral file of the same length)
+# coop.analyze scores the structured reads against the partner's true order and next
+# action ("structured ToM" table). Works with any OpenAI-compatible backend (vLLM or an
+# API model): set the backend env vars, see docs/coop-setting.md.
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/days_llm_model.yaml --out outputs/days_model --workers 48
+name: days_llm_model
+layout: open2_env
+menu: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 5
+episodes_per_day: 2
+ego_index: 0
+personas: [steady, oldest_first, newest_first, favourite_dish, repeats_dish]
+run_seeds: [0, 1, 2, 3]
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL          # set by scripts/run_qwen38_days.sh
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS   # thinking off, picked by coop.check
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: true
+  max_memory_notes: 5
+  max_tokens: 400          # structured reads are longer than one sentence
+  model_words: 200         # partner-model file length
+  model_max_tokens: 1000   # the reflection that rewrites the file
+conditions:
+  direct: {tom: false, memory: false}
+  tom_memory: {tom: true, memory: true}
+  tom_struct: {tom: true, tom_mode: structured, memory: false}
+  tom_model: {tom: true, memory: true, memory_mode: model}
+  tom_struct_model: {tom: true, tom_mode: structured, memory: true, memory_mode: model}
+  tom_struct_model_swap:
+    tom: true
+    tom_mode: structured
+    memory: true
+    memory_mode: model
+    memory_source:
+      type: swap
+      from: tom_struct_model
+      donors: {steady: newest_first, oldest_first: newest_first, newest_first: oldest_first,
+               favourite_dish: newest_first, repeats_dish: newest_first}
+  tom_struct_model_placebo:
+    tom: true
+    tom_mode: structured
+    memory: true
+    memory_mode: model
+    memory_source: {type: placebo, from: tom_struct_model}
+reference_agent: {type: scripted, persona: steady}

@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from .analyze import REFERENCE, _mean_se, load_episodes, rescore_probe
 
 CONTRASTS = [("tom", "direct"), ("memory", "direct"), ("tom_memory", "direct"), ("tom_memory", "tom"),
-             ("tom_memory_swap", "tom_memory"), ("tom_memory_placebo", "tom_memory")]
+             ("tom_memory_swap", "tom_memory"), ("tom_memory_placebo", "tom_memory"),
+             ("tom_struct", "direct"), ("tom_model", "tom_memory"), ("tom_struct_model", "tom_model"),
+             ("tom_struct_model", "tom_memory"), ("tom_struct_model", "direct"),
+             ("tom_struct_model_swap", "tom_struct_model"), ("tom_struct_model_placebo", "tom_struct_model")]
 IGNORED_KEYS = {"name"}
 
 
