@@ -158,16 +158,43 @@ all six conditions. A = radius 2, B = full view; otherwise identical. `coop.comp
     direct change) and `favourite_dish` (+19.5 ± 9.3). So the gain is not specific to order habits.
 - **The probe never identifies the order habit:** `orders` accuracy 0.17–0.21 in every condition
   and both views. That is the level of one fixed answer right for one of the five partners.
-- **Next checks (no new runs):**
-  - the analyze report's order-habit table (does the ego leave the carrot soup to
-    `favourite_dish`? does it take older orders with `newest_first`?), and the most common `orders` answer;
-  - the tom_memory notes under partial view (what do they say that helps?).
+- **Behaviour** (`coop.analyze` order-habit table; "ego newer" = share of the ego's deliveries that
+  skipped an older open order; differences in percentage points, SE over 4 runs per partner):
+  - **Partial view, tom_memory − direct, ego newer:** `oldest_first` +5±3, `favourite_dish` +10±4,
+    `repeats_dish` +14±0 (all three usually work on the oldest order), but `newest_first` −2±3 and
+    `steady` −1±5. The direction fits each partner's habit: take the newer order when the partner
+    takes the older one.
+  - **Partial view, swap − tom_memory:** the change reverses, towards the donor's habit. Notes about
+    a `newest_first` partner give `favourite_dish` −10±6 and `repeats_dish` −10±4; notes about an
+    `oldest_first` partner give `newest_first` +5±4. This is the clearest partner-specific signature
+    so far, but small and based on few runs. Placebo is mixed (−6 to +4).
+  - **Full view:** ToM alone makes the ego take newer orders with *every* partner, including
+    `newest_first` (+8±2) and `steady` (+14±2). tom_memory is the same (+11 to +26), and swap
+    matches it. That is a general strategy, not a response to the partner, and it does not raise
+    the score.
+  - **Favourite dish, full view only:** tom_memory leaves the carrot soup to `favourite_dish` (ego
+    share 12% vs 19% for `direct`, −9±3). Swap (+9±2) and placebo (+15±6) undo it, so it is
+    partner-specific, but the score does not improve. With a partial view there is no such effect
+    (−3±12): the ego rarely sees the partner working on the soup.
+  - **The score gain is not explained by order choice.** The largest partial-view score change is
+    with `steady` (+22.5), where order choice does not change.
+- **The probe never names a habit:** the answer to `orders` is "no fixed habit" for every partner, in
+  every condition and both views. Behaviour adapts a little; the explicit report does not.
+- **Open questions:**
+  - Where does the partial-view gain come from? Check the decision stats and the division of labour
+    of the two folders.
+  - Does the ToM text track the partner's order? Score the `tom` "partner" sentences against the
+    dish the partner was really working on (offline, from `partner_truth.json`).
 
 ## 4. Current conclusion
 
 ToM + memory consistently improves an LLM's teamwork with a stable simulated human:
 - **With order habits and two open orders** (§3.7), it helps only under a partial view:
-  +11.4 ± 4.3 more than with a full view. Partner-specificity is not established there.
+  +11.4 ± 4.3 more than with a full view.
+  - Under a partial view, the order the ego takes shifts with the partner's habit, and swapped
+    notes shift it the donor's way (small effects).
+  - The score gain is largest with `steady`, though, so its source is not yet known.
+  - The probe never names an order habit.
 - **When the map fixes the roles,** the gain is general skill.
 - **When roles are free,** part of the gain is partner-specific. The clearest case is a
   serve-preferring partner: the agent recognises the preference, gives the serving work to the
