@@ -241,6 +241,48 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.10 Structured ToM and partner-model file (`days_model`, 2026-11-14)
+Setting as `days_orders` (`open2_env`, 2 open orders, radius 2, `ORDER_PERSONAS` × 4 seeds,
+20 runs). Mean ± SE over runs.
+
+| condition | vs direct | vs tom_memory |
+|---|---|---|
+| tom_memory (free ToM + notes) | +7.2 ± 3.9 | - |
+| tom_model (free ToM + file) | +8.4 ± 3.4 | +1.2 ± 4.0 |
+| **tom_struct** (structured ToM, no memory) | **+13.0 ± 3.2** | +5.8 ± 3.7 |
+| tom_struct_model (both) | +10.3 ± 2.6 | +3.1 ± 4.2 |
+| tom_struct_model_swap | +6.4 ± 2.6 | −0.8 ± 3.4 |
+| tom_struct_model_placebo | +6.5 ± 2.9 | −0.7 ± 4.3 |
+
+- **Structured ToM is the best condition,** with no memory at all. The difference from
+  tom_memory (+5.8 ± 3.7) is not significant.
+- **The partner-model file does not help.**
+  - The file ≈ the notes (tom_model − tom_memory +1.2).
+  - Structured ToM with the file is no better than without it (10.3 vs 13.0).
+  - The agent's own file beats swap / placebo files by about 4 (not significant).
+- **File conditions get worse over days:** tom_struct_model −14.5 on day 1 → −41.5 on day 5,
+  and swap / placebo also end around −42. Episode-level SE is about 8, but `direct` and
+  `tom_struct` stay flat.
+- **The own file brings repeated invalid actions:** tom_model 122 fallbacks and tom_struct_model
+  55, mostly `put_obj_in_utensil(pot)` tried twice while the pot cannot take items. That compares
+  with 8–18 fallbacks for the other conditions, including swap / placebo. The files probably hold
+  rules that push the agent to the pot. Not yet inspected.
+- **Reads** (structured ToM, about 3,000 per condition and persona):
+  - **order accuracy 70–81%:**
+    - `newest_first`: 74–80% vs 53–54% for "always the oldest order". This is the one case
+      where the agent clearly tracks the partner.
+    - Partners that usually work on the oldest order: 73–81%, *below* the oldest baseline
+      (82–89%).
+  - **next action:** exact 40–49%, verb 67–74%. The repeat baseline (0%) is too weak to judge this.
+  - **No learning:** reads improve over days only as much as the baseline does, and the file
+    (own, swap or placebo) does not change accuracy. Memory does not make the reads better.
+- **Within-episode adaptation:** tom_struct leaves the carrot soup to `favourite_dish` (ego share
+  11% vs 24% for direct, −14 ± 7; vs tom_memory −23 ± 5). The file variants show it too, so it
+  comes from watching during the episode, not from memory.
+- **The order-taking pattern of §3.7 did not replicate:** the swap now moves `oldest_first` and
+  `newest_first` the opposite way.
+- **The probe's `orders` field is still "no fixed habit"** for every habit partner.
+
 ### 3.8 How ToM and memory were implemented so far (important for reading §3)
 - **`tom`:** one or two free sentences about the partner before each action. They are never shown
   again, so nothing builds up within an episode.
@@ -268,6 +310,9 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
     notes shift it the donor's way (small effects).
   - The score gain is largest with `steady`, though, so its source is not yet known.
   - The probe never names an order habit.
+  - **Structured ToM without memory does best there** (+13.0 ± 3.2 vs direct, §3.10). The agent
+    tracks the partner's order only for `newest_first`, and adapts within an episode (leaves the
+    carrot soup to `favourite_dish`). A rewritten partner file adds nothing and may hurt over days.
 - **When the map fixes the roles,** the gain is general skill.
 - **When roles are free** (open kitchen, one order; replicated three times, §3.4 and §3.9):
   - ToM gives about +8, and the agent's own notes add about +5.
