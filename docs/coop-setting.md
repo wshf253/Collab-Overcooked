@@ -493,6 +493,16 @@ and stops the server. It uses the same variables as ICRL4AHT's
 `run_qwen38_coop.sh` (`LLM_MODEL_PATH`, `LLM_SERVE_ENV`, `MAX_NUM_SEQS`,
 `GPU_MEM`, ...; with `ICRL_LLM_BASE_URL` set, it uses that server instead).
 
+**Several GPUs for one run:** `GPUS=2` (with `lab-run --gpus 2`) serves one model copy per GPU
+behind one endpoint (vLLM `--data-parallel-size`), so twice as many requests run at once. Give
+about `GPUS × MAX_NUM_SEQS` workers. `PARALLEL=tp` splits one copy over the GPUs instead, for a vLLM
+without data parallelism. Only the server changes, so results are comparable and a run can
+resume with more GPUs.
+
+```bash
+lab-run --new --spare --gpus 2 --cpus 24 --mem 110G -- env GPUS=2 MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm_model.yaml --out outputs/days_model_v2 --workers 96
+```
+
 **API models** (any OpenAI-compatible endpoint): skip the serving script and set the
 backend variables yourself (the key stays in the environment, never in a config):
 

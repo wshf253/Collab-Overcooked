@@ -12,6 +12,10 @@
 #     bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --workers 16
 # Each entry is layout:out_dir (or just a layout, then --out PREFIX gives PREFIX_<layout>).
 # The maps run in parallel, each a separate coop.days process; MAX_NUM_SEQS is shared.
+# Several GPUs (GPUS=2 with lab-run --gpus 2): PARALLEL=dp (default) runs one model copy per GPU
+# behind one endpoint (vLLM --data-parallel-size), so twice as many requests run at once; give
+# about GPUS x MAX_NUM_SEQS workers. PARALLEL=tp splits one copy over the GPUs instead (each call
+# is faster, fewer at once); use it if your vLLM has no --data-parallel-size.
 # Adapted from ICRL4AHT scripts/run_qwen38_coop.sh (same variables and defaults).
 set -euo pipefail
 
@@ -23,6 +27,8 @@ MODEL_PATH="${LLM_MODEL_PATH:-/lab/ckpt/jsj412/Qwen3.8-27B}"
 export ICRL_LLM_MODEL="${ICRL_LLM_MODEL:-qwen3.8-27b}"
 LOG_DIR="$REPO/outputs/serve_$(date +%Y%m%d_%H%M%S)_${SLURM_JOB_ID:-manual}_$$"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-16}"                  # parallel runs (--workers) only help if vLLM batches them
+GPUS="${GPUS:-1}"                                   # GPUs for the server (match lab-run --gpus)
+PARALLEL="${PARALLEL:-dp}"                          # dp: one model copy per GPU; tp: one copy split over them
 GPU_MEM="${GPU_MEM:-0.85}"
 REASONING_PARSER="${REASONING_PARSER:-qwen3}"      # empty = no parser (thinking then appears inline)
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-1}"     # skip the vision tower of multimodal checkpoints
@@ -50,8 +56,14 @@ if [[ -z "${ICRL_LLM_BASE_URL:-}" ]]; then
     PORT="$("$PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
     export ICRL_LLM_BASE_URL="http://127.0.0.1:$PORT/v1"
     ARGS=(--served-model-name "$ICRL_LLM_MODEL" --host 127.0.0.1 --port "$PORT"
-          --dtype bfloat16 --tensor-parallel-size 1 --max-model-len 16384
+          --dtype bfloat16 --max-model-len 16384
           --max-num-seqs "$MAX_NUM_SEQS" --gpu-memory-utilization "$GPU_MEM" --enable-prefix-caching)
+    case "$PARALLEL" in
+        dp) ARGS+=(--tensor-parallel-size 1); [[ "$GPUS" -gt 1 ]] && ARGS+=(--data-parallel-size "$GPUS") ;;
+        tp) ARGS+=(--tensor-parallel-size "$GPUS") ;;
+        *) echo "PARALLEL must be dp or tp (got $PARALLEL)" >&2; exit 1 ;;
+    esac
+    echo "Serving on $GPUS GPU(s), PARALLEL=$PARALLEL, MAX_NUM_SEQS=$MAX_NUM_SEQS per model copy"
     [[ -n "$REASONING_PARSER" ]] && ARGS+=(--reasoning-parser "$REASONING_PARSER")
     [[ "$LANGUAGE_MODEL_ONLY" == 1 ]] && ARGS+=(--language-model-only)
     [[ "$ENFORCE_EAGER" == 1 ]] && ARGS+=(--enforce-eager)
