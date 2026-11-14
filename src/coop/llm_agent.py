@@ -147,6 +147,7 @@ class LLMAgent(Agent):
         self.probe_answer: Optional[Dict[str, Any]] = None
         self.call_index = 0
         self.last_read: Optional[Tuple[int, Dict[str, str]]] = None   # structured ToM, this episode
+        self.model_update: Optional[Dict[str, Any]] = None             # partner-model file, this episode
         self.system = None
         self._last_macro = None
 
@@ -193,11 +194,15 @@ class LLMAgent(Agent):
         self.memory["episodes_played"] = self.memory.get("episodes_played", 0) + 1
         if not (self.probe or self.use_memory):
             return
-        answer = self._probe(result)
+        answer = self._probe(result) if (self.probe or not self.model_mode) else None
         self.probe_answer = answer
         if self.model_mode:
-            if answer is not None and answer.get("partner_model"):
-                self.memory["partner_model"] = answer["partner_model"]
+            # Its own call, after the probe: the file is about the partner's goals and
+            # choices, not the probe's trait labels (and it never sees the probe's pace line).
+            update = self._update_model(result)
+            self.model_update = {k: v for k, v in update.items() if k != "text"}
+            if update["ok"]:
+                self.memory["partner_model"] = update["text"]
                 self.memory["model_updates"] = self.memory.get("model_updates", 0) + 1
             return
         if self.use_memory and answer is not None:
@@ -210,7 +215,8 @@ class LLMAgent(Agent):
         return {"condition": {"tom": self.tom, "memory": self.use_memory, "probe": self.probe,
                               "tom_mode": self.tom_mode, "memory_mode": self.memory_mode},
                 "usage": self.usage.as_dict(), "invalid_actions": self.invalid, "fallbacks": self.fallbacks,
-                "decisions": self.decisions, "probe": self.probe_answer, "system_prompt": self.system,
+                "decisions": self.decisions, "probe": self.probe_answer, "model_update": self.model_update,
+                "system_prompt": self.system,
                 "calls": self.calls}
 
     # ------------------------------------------------------------------ #
@@ -460,38 +466,58 @@ class LLMAgent(Agent):
                f"can reach them): {', '.join(avoid)}.\n" if avoid else
                "No utensil was both needed and reachable by both of you, so avoids is not asked.\n")
             + f"{profile_guide(fields)}\n"
-            + (self._model_request() if self.model_mode else "")
             + f'Reply with JSON only: {{"partner_profile": {{{options}}}, "stage_shares": {{"prep": <percent>, '
-            '"cook": <percent>, "serve": <percent>}, '
-            + ('"partner_model": "<the whole rewritten file, markdown, lines separated by \\n>"}'
-               if self.model_mode else
-               '"notes": "<at most 80 words: what to do differently with this partner next time>"}'))
+            '"cook": <percent>, "serve": <percent>}, "notes": "<at most 80 words: what to do differently '
+            'with this partner next time>"}')
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
-        parsed, _ = self._chat("probe", self.context["horizon"], messages,
-                               self.model_max_tokens if self.model_mode else self.probe_max_tokens)
+        parsed, _ = self._chat("probe", self.context["horizon"], messages, self.probe_max_tokens)
         if not parsed:
             return None
-        model, cut = None, False
-        if self.model_mode and isinstance(parsed.get("partner_model"), str) and parsed["partner_model"].strip():
-            model, cut = bound_words(parsed["partner_model"].strip(), self.model_words)
         notes = parsed.get("notes")
         return {"partner_profile": clean_profile(parsed.get("partner_profile"), fields),
                 "asked": {"avoids": avoid}, "pace": self.pace.share(),
-                "partner_model": model, "model_cut": cut,
                 "raw_profile": parsed.get("partner_profile"),
                 "stage_shares": clean_shares(parsed.get("stage_shares")),
                 "notes": notes if isinstance(notes, str) else ""}
 
 
-    def _model_request(self) -> str:
+    def _update_model(self, result) -> Dict[str, Any]:
+        """Rewrite the partner-model file from this episode (memory_mode "model")."""
         current = self.memory.get("partner_model")
-        return ("\nYOUR PARTNER MODEL SO FAR:\n"
-                + (current if current else "(none yet: this was your first episode with this partner)")
-                + "\n\nRewrite your partner model with what this episode showed: keep what still holds, "
-                "correct what was wrong, add new evidence (say which day and episode), and say what to do "
-                "with this partner next time. Use exactly these sections: " + ", ".join(MODEL_SECTIONS)
-                + f". At most {self.model_words} words. This file is all you will remember about your "
-                "partner.\n")
+        log = "\n".join(f"t={t}: {a}" for t, a in self.partner_log) or "(none)"
+        events = "\n".join(self.events) or "(none)"
+        user = (
+            "PARTNER_MODEL_UPDATE\n"
+            f"The episode is over (day {result['day']}, episode {result['episode']}). Team score "
+            f"{result['score']:+g}, orders completed {result['orders_completed']}.\n"
+            + ("Every action of your partner that you saw" if self.belief is not None else
+               "Every action your partner completed") + f" (time step: action):\n{log}\n"
+            f"Events:\n{events}\n\n"
+            "YOUR PARTNER MODEL SO FAR:\n"
+            + (current if current else "(none yet: this was your first episode with this partner)")
+            + "\n\nRewrite your model of your partner as a person with their own goals and habits: "
+            "how they choose what to do (which orders, dishes and tasks they go for, and when), how they "
+            "react to what you do, and what you should do so that you work well together. Keep what still "
+            "holds, correct what this episode showed was wrong, and give evidence for each habit (day, "
+            "episode, time steps). Leave out general traits such as speed or reliability unless they change "
+            f"what you should do. Use exactly these sections: {', '.join(MODEL_SECTIONS)}. At most "
+            f"{self.model_words} words. This file is all you will remember about your partner.\n"
+            'Reply with JSON only: {"partner_model": "<the whole file as one markdown string>"}')
+        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
+        parsed, text = self._chat("model", self.context["horizon"], messages, self.model_max_tokens)
+        if not parsed:
+            return {"ok": False, "reason": "reply was not JSON", "reply_chars": len(text or "")}
+        raw = parsed.get("partner_model")
+        if isinstance(raw, dict):      # sections given as an object: render them as markdown
+            raw = "\n\n".join(f"{k if str(k).startswith('#') else '## ' + str(k)}\n" +
+                               ("\n".join(f"- {x}" for x in v) if isinstance(v, list) else str(v))
+                               for k, v in raw.items())
+        elif isinstance(raw, list):
+            raw = "\n".join(str(x) for x in raw)
+        if not isinstance(raw, str) or not raw.strip():
+            return {"ok": False, "reason": "no partner_model in the reply"}
+        model, cut = bound_words(raw.strip(), self.model_words)
+        return {"ok": True, "text": model, "words": len(model.split()), "cut": cut}
 
 
 register_agent("llm", LLMAgent)

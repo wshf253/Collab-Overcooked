@@ -242,6 +242,21 @@ The code differs: the new probe has a pace line and new options, which also chan
     likely lesson in the notes is "do everything yourself".
 
 ### 3.10 Structured ToM and partner-model file (`days_model`, 2026-11-14)
+
+**The file results here are not valid.** In most episodes the file was never written: the
+reflection reply was strict JSON with markdown inside, and raw line breaks made it fail to parse.
+`newest_first` seed 0 had no file on any day, and `favourite_dish` only from day 5. When a file was
+written, the probe's trait list and pace line leaked into it ("Speed: very fast; 87%…"). That is
+bookkeeping, not a model of the partner.
+
+**Fixed 2026-11-14:**
+- parsing allows raw line breaks;
+- the file is rewritten in its own call, framed around the partner's goals, choices and reactions,
+  without the probe's labels;
+- `coop.analyze` reports how often the file was written.
+
+Rerun in a new folder. The structured-ToM results (`tom_struct`) do not depend on the file and
+stand.
 Setting as `days_orders` (`open2_env`, 2 open orders, radius 2, `ORDER_PERSONAS` × 4 seeds,
 20 runs). Mean ± SE over runs.
 

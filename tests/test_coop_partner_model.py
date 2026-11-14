@@ -46,6 +46,14 @@ class HelperTests(unittest.TestCase):
         self.assertNotIn("partner", fake.lower())
         self.assertLess(abs(len(fake) - len(real)), 0.5 * len(real))
 
+    def test_json_with_raw_line_breaks(self):
+        from coop.llm import parse_json
+        text = '{"partner_model": "## How they choose what to do (with evidence)\n- takes the soup\n"}'
+        raw = text.replace("\\n", "\n")        # real line breaks inside the string, as models write them
+        self.assertIn("\n", raw)
+        self.assertEqual(parse_json(raw)["partner_model"].splitlines()[1], "- takes the soup")
+        self.assertEqual(parse_json("noise " + raw + " tail")["partner_model"].splitlines()[1], "- takes the soup")
+
     def test_modes_are_validated(self):
         with self.assertRaises(ValueError):
             LLMAgent({"type": "mock"}, tom=True, tom_mode="deep")
@@ -89,8 +97,13 @@ class PipelineTests(unittest.TestCase):
         first = self.ep("tom_struct_model", 1, "agent_log.json")
         self.assertNotIn("Your partner model", first["system_prompt"])
         probe = [c for c in first["calls"] if c["kind"] == "probe"][0]["user"]
-        self.assertIn("YOUR PARTNER MODEL SO FAR", probe)
-        self.assertIn('"partner_model"', probe)
+        self.assertNotIn("YOUR PARTNER MODEL SO FAR", probe)     # the probe no longer writes the file
+        update = [c for c in first["calls"] if c["kind"] == "model"][0]["user"]
+        self.assertIn("YOUR PARTNER MODEL SO FAR", update)
+        self.assertIn('"partner_model"', update)
+        self.assertNotIn("pace", update.lower())                 # no probe pace line or trait guide
+        self.assertNotIn("What the answers mean", update)
+        self.assertTrue(first["model_update"]["ok"])
         mem = self.ep("tom_struct_model", 1, "memory_after.json")
         self.assertTrue(mem["partner_model"].startswith(MODEL_SECTIONS[0]))
         second = self.ep("tom_struct_model", 2, "agent_log.json")
@@ -122,6 +135,11 @@ class PipelineTests(unittest.TestCase):
             self.assertAlmostEqual(r["order_acc"], r["oldest_baseline"])
         self.assertNotIn("tom_memory", rep["reads"]["personas"])
         self.assertIn("structured ToM", format_report(rep))
+        health = rep["model_health"]
+        self.assertEqual(set(health), {"tom_model", "tom_struct_model", "tom_struct_model_swap",
+                                       "tom_struct_model_placebo"})
+        self.assertEqual(health["tom_struct_model"]["written"], 1.0)
+        self.assertIn("partner-model file: was it written", format_report(rep))
 
 
 if __name__ == "__main__":

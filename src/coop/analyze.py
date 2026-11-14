@@ -379,6 +379,7 @@ def analyse(out: Path) -> Dict[str, Any]:
     report["labour"] = labour_table(out, eps, conditions)
     report["orders"] = order_table(eps, conditions)
     report["reads"] = read_table(eps)
+    report["model_health"] = model_health(eps)
     return report
 
 
@@ -493,6 +494,34 @@ def read_stats(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             st["next_verb"] += guess.split("(")[0] == _norm_action(nxt).split("(")[0]
             st["repeat_exact"] += prev is not None and _norm_action(prev) == _norm_action(nxt)
     return dict(st)
+
+
+def model_health(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Partner-model file conditions: how often the file was actually rewritten.
+
+    New logs record ``model_update``; older ones (file rewritten inside the probe) are
+    read from the probe answer: no probe answer = the reflection reply was not parsed."""
+    acc: Dict[str, Counter] = defaultdict(Counter)
+    for e in eps:
+        log = e["log"] or {}
+        if (log.get("condition") or {}).get("memory_mode") != "model":
+            continue
+        c = acc[e["condition"]]
+        c["episodes"] += 1
+        upd = log.get("model_update")
+        if upd is not None:
+            c["written"] += bool(upd.get("ok"))
+            c["not_json"] += upd.get("reason") == "reply was not JSON"
+            c["words"] += upd.get("words") or 0
+        else:
+            probe = log.get("probe")
+            c["written"] += bool(probe and probe.get("partner_model"))
+            c["not_json"] += probe is None
+            c["words"] += len(((probe or {}).get("partner_model") or "").split())
+    return {cond: {"episodes": c["episodes"], "written": c["written"] / c["episodes"],
+                   "not_json": c["not_json"] / c["episodes"],
+                   "mean_words": c["words"] / c["written"] if c["written"] else None}
+            for cond, c in sorted(acc.items())}
 
 
 def read_table(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -669,6 +698,15 @@ def format_report(rep: Dict[str, Any]) -> str:
             for other, d in vs.items():
                 per = ", ".join(f"{p} {_fmt(v)}" for p, v in sorted(d["personas"].items()))
                 lines.append(f"  {cond} - {other}: {_fmt(d['all'])}  [{per}]")
+    health = rep.get("model_health") or {}
+    if health:
+        lines.append("\n== partner-model file: was it written after each episode? ==")
+        for cond, h in health.items():
+            words = "-" if h["mean_words"] is None else f"{h['mean_words']:.0f}"
+            lines.append(f"  {cond:<30} episodes {h['episodes']:>4}  written {100 * h['written']:>3.0f}%  "
+                         f"reply not JSON {100 * h['not_json']:>3.0f}%  mean words {words}")
+            if h["written"] < 0.9:
+                lines.append("    WARNING: the file was often not written; this condition mostly ran without it")
     reads = rep.get("reads") or {}
     if reads.get("personas"):
         pct = lambda x: "-" if x is None else f"{100 * x:.0f}"

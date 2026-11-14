@@ -40,7 +40,8 @@ LEGACY_ANSWERS = {"commitment": {"abandons tasks": "leaves tasks unfinished"}}
 
 # Partner-model file (LLM agent, memory_mode "model"): one markdown file the agent
 # rewrites after every episode, shown in every later episode.
-MODEL_SECTIONS = ("## Habits (with evidence)", "## What works with them", "## Open questions")
+MODEL_SECTIONS = ("## How they choose what to do (with evidence)", "## How they react to me",
+                  "## What I should do with them", "## Open questions")
 
 
 def model_template() -> str:

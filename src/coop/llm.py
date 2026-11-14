@@ -172,9 +172,10 @@ class MockBackend(Backend):
                                        "orders": "no fixed habit"},
                    "stage_shares": {"prep": 34, "cook": 33, "serve": 33},
                    "notes": "mock notes"}
-            if "YOUR PARTNER MODEL SO FAR" in last:
-                out["partner_model"] = ("## Habits (with evidence)\n- mock habit\n\n## What works with them\n"
-                                        "- mock\n\n## Open questions\n- mock")
+        elif "PARTNER_MODEL_UPDATE" in last:
+            out = {"partner_model": "## How they choose what to do (with evidence)\n- mock habit\n\n"
+                                    "## How they react to me\n- mock\n\n## What I should do with them\n- mock"
+                                    "\n\n## Open questions\n- mock"}
         else:
             valid = [a for a in _grab_list(last, "VALID_ACTIONS:") if not a.startswith("wait")]
             act = "wait(2)"
@@ -234,7 +235,8 @@ def parse_json(text: str) -> Optional[dict]:
     t = text.strip()
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t)
     try:
-        v = json.loads(t)
+        # strict=False: allow raw line breaks inside strings (common in long markdown values)
+        v = json.loads(t, strict=False)
         return v if isinstance(v, dict) else None
     except Exception:
         pass
@@ -248,7 +250,7 @@ def parse_json(text: str) -> Optional[dict]:
             depth -= 1
             if depth == 0 and start is not None:
                 try:
-                    v = json.loads(t[start:k + 1])
+                    v = json.loads(t[start:k + 1], strict=False)
                     if isinstance(v, dict):
                         return v
                 except Exception:
