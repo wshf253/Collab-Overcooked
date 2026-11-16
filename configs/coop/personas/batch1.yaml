@@ -1,0 +1,50 @@
+# Pilot persona cards (docs/PERSONA_PARTNER_PLAN_v2.md, section 4.3).
+# Rules are ordered: at complexity K only the first K are active (nested), so K varies
+# without changing the persona. Backstories are for voice only and add no behaviour.
+#
+# Design checks (enforced by tests/test_coop_rules.py):
+#   - 6 rules per card, no contradictions (coop.rules.check_rules);
+#   - any two cards differ in at least 3 rules (id + parameters);
+#   - every rule category appears in at least two cards, with different parameters or
+#     present / absent, so a swapped partner file is wrong about something.
+# "neutral" (no rules) is built in: the competence baseline.
+
+p1:
+  backstory: "Ten years in a bakery before this job. Methodical and proud of her oven work; she dislikes being interrupted in the middle of a task."
+  rules:
+    - own_station: {station: oven0}
+    - solo_dish: {dish: baked_carrot_soup}
+    - order_priority: {which: oldest}
+    - on_contention: {mode: insists}
+    - handover_spot: {group: right}
+    - on_takeover: {}
+
+p2:
+  backstory: "A prep cook who loves knife work and mise en place. Quick at chopping, happy to leave the finishing touches and the pass to someone else."
+  rules:
+    - split_dish: {dish: sliced_eggplant_and_chickpea_stew}
+    - serves: {who: ego}
+    - own_station: {station: chopping_board1}
+    - order_priority: {which: newest}
+    - on_contention: {mode: yields}
+    - waits_for_commit: {}
+
+p3:
+  backstory: "Started as a waiter and moved into the kitchen. Likes to be the one who hands the food over, and likes to stay put while a dish comes together."
+  rules:
+    - serves: {who: self}
+    - own_station: {station: pot1}
+    - wants_supplies: {}
+    - on_contention: {mode: yields}
+    - handover_spot: {group: left}
+    - waits_for_commit: {}
+
+p4:
+  backstory: "A careful cook who watches before acting. Prefers to prepare things properly and let others finish, and keeps to the newest tickets."
+  rules:
+    - split_dish: {dish: baked_carrot_soup}
+    - order_priority: {which: newest}
+    - own_station: {station: chopping_board0}
+    - on_takeover: {}
+    - handover_spot: {group: center}
+    - waits_for_commit: {}
