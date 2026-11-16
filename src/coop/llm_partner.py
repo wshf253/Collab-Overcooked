@@ -84,7 +84,7 @@ class LLMPartner(LLMAgent):
         super().begin_episode(mdp, index, context)
         self.intention: Optional[Dict[str, Any]] = None
         self.trace: List[Dict[str, Any]] = []
-        self.events: List[Dict[str, Any]] = []
+        self.goal_events: List[Dict[str, Any]] = []      # (LLMAgent.events holds the public kitchen events)
         self.reminder_log: List[Dict[str, Any]] = []
         self.rt: Optional[Tracker] = None
         self.checks = None
@@ -177,7 +177,7 @@ class LLMPartner(LLMAgent):
             prev = self.intention
             self.intention = dict(rec["intention"], t=t)
             if prev is None or prev.get("goal") != self.intention["goal"]:
-                self.events.append({"t": t, "type": "goal", **rec["intention"]})
+                self.goal_events.append({"t": t, "type": "goal", **rec["intention"]})
         self.trace.append({"t": t, "goal": (self.intention or {}).get("goal"),
                            "order": (self.intention or {}).get("order"), "macro": rec.get("chosen"),
                            "stage": macro_stage(rec.get("chosen", "")),
@@ -193,7 +193,7 @@ class LLMPartner(LLMAgent):
         return {"name": self.card.name, "type": "llm", "rules": [r.label() for r in self.rules],
                 "decisions": len(self.decisions), "invalid_actions": self.invalid, "fallbacks": self.fallbacks,
                 "usage": self.usage.as_dict(), "stages": stages, "reminders": reminders,
-                "goal_changes": sum(e["type"] == "goal" for e in self.events)}
+                "goal_changes": len(self.goal_events)}
 
 
 class LLMPartnerPlayer:
@@ -224,7 +224,7 @@ class LLMPartnerPlayer:
 
     @property
     def events(self):
-        return self.agent.events
+        return self.agent.goal_events
 
     def summary(self) -> Dict[str, Any]:
         return self.agent.summary()

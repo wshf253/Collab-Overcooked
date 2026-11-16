@@ -1,0 +1,42 @@
+# Gate 2 (docs/PERSONA_PARTNER_PLAN_v2.md, section 10): does knowing the partner matter?
+# Scripted egos against the LLM persona partner: aligned (does what this card wants),
+# generic (steady), misaligned (does what another card wants). Seeds 0-3 and 4-7 are
+# reported separately (the second set re-measures the first). For the twin, use
+# python -m coop.voi --cards configs/coop/personas/batch1.yaml (CPU).
+# Analyse with: python -m coop.persona_check gate2 outputs/gate2_llm
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/persona_gate2.yaml --out outputs/gate2_llm --workers 48
+name: persona_gate2
+layout: open2_env
+menu: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 1
+episodes_per_day: 3
+ego_index: 0
+personas: [p1, p2, p3, p4]
+run_seeds: [0, 1, 2, 3, 4, 5, 6, 7]
+agent: {type: scripted, persona: steady}
+conditions:
+  aligned: {type: rule_ego, align: own}
+  generic: {}
+  misaligned: {type: rule_ego, align: other}
+reference_agent: null
+partner:
+  type: llm
+  cards: configs/coop/personas/batch1.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120

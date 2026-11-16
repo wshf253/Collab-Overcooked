@@ -595,6 +595,132 @@ Order habits with the LLM ego (all six conditions):
 lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm_orders.yaml --out outputs/days_orders --workers 48
 ```
 
+## LLM persona partner (plan v2: `docs/PERSONA_PARTNER_PLAN_v2.md`)
+
+The experimental partner. The scripted personas above remain as a test harness.
+
+**Rules and cards.**
+- **The library** (`configs/coop/rules/library.yaml`, `coop.rules`) holds 10 rules. Each has a
+  category, parameters, the partner's text (second person), a fallback, what it *wants* from
+  the other cook, and a reminder line.
+- **A persona card** (`configs/coop/personas/batch1.yaml`) is an ordered list of rules plus a
+  backstory for voice. At complexity K the first K rules are active (nested).
+- **`neutral`** is built in: a card with no rules, used as the competence baseline.
+- **Contradictions are rejected on load:** `solo_dish` + `split_dish` on one dish,
+  `serves(ego)` + `solo_dish`, `serves(self)` + `split_dish`, `wants_supplies` + `solo_dish`,
+  a single-use rule twice, two `own_station` rules on one station kind.
+- **Pilot cards:** p1–p4 have 6 rules each and no contradictions. Any two differ in ≥ 3 rules,
+  and every category appears in ≥ 2 cards with different parameters (tested). The plan's
+  example card combined `solo_dish` with `serves(ego)`, a contradiction under its own rule, so
+  p1 does not.
+
+**Shared priority** (in the partner's prompt, used by the twin, applied by the predicates):
+1. a valid action and no deadlock;
+2. finishing what it holds or started;
+3. its rules in card order;
+4. otherwise what is needed next, oldest order first.
+
+So when two rules conflict, the earlier one wins, and the later one's predicate does not
+count that decision. Examples: a `solo_dish` pick is not an `order_priority` violation, and an
+earlier `order_priority` overrides `on_takeover` on the committed order.
+
+**Predicates** (`coop.rule_eval`). Each step, every completed action becomes an *event*: verb,
+target, item, the dishes it belongs to, and whether it was a *choice* (taken with empty hands).
+A shared `Tracker` keeps the kitchen's memory: who loaded or started each utensil, who put each
+counter item down, how long a complete batch or finished food has waited, each player's
+current order, and new orders. The evaluator, the twin and the LLM partner's reminders all use
+it. "Had work on X" means a job the partner's own rules allow, computed by the base job
+generator.
+
+| rule | adherent (partner) | aligned (ego) |
+|---|---|---|
+| `own_station(s)` | loads of that kind go into `s`, unless `s` cannot take the item | the ego's interactions with that kind avoid `s` (a load is not counted if no other station could take it) |
+| `solo_dish(d)` | while `d` is open and the partner has `d` work, its choices are on `d` | the ego does not touch `d`; other choices while `d` is open count as aligned |
+| `split_dish(d)` | it does not start, plate or deliver `d`, unless the batch or food waited ≥ 20 steps; while it has `d` prep work, its choices are `d` prep | each start / plate / delivery of `d` is aligned if the ego did it |
+| `order_priority(w)` | its next pick after its committed order is gone is the `w` order (any of the last 10 steps); leaving the committed order counts only if that order still had work for it | the ego's picks avoid the partner's committed order |
+| `serves(self)` | when serving work exists, its choices are serving | each plating / delivery is aligned if the partner did it |
+| `serves(ego)` | when serving work exists, its choices are not serving (unless food waited ≥ 20 steps) | each plating / delivery is aligned if the ego did it |
+| `wants_supplies` | it does not fetch a missing item of its incomplete batch from the dispenser for 15 steps (taking it from a counter is fine) | each missing item that reaches its batch is aligned if the ego supplied it (directly or through a counter) |
+| `handover_spot(g)` | its counter placements are in group `g` (or `g` was full) | the ego's placements are in `g` (when `g` had room) |
+| `on_takeover` | after the ego takes over its things, its next choice within 30 steps is not on that dish (only if it had other work) | the ego's interactions with existing items do not take over the partner's (allowed when another rule asks for it) |
+| `on_contention(m)` | in a race to load the same utensil (both carry an item for it, both within 3 cells), resolved by who uses it first: `yields`: the ego got it, or the partner after 5 steps; `insists`: the partner got it, or still had it as its target | `yields`: the ego got it; `insists`: the partner got it |
+| `waits_for_commit` | its first choice after a new order opens comes ≥ 5 steps later or after the ego's first choice | the ego (empty-handed at the opening) makes a choice within 5 steps |
+
+A rule with no opportunity in an episode is undefined, not perfect. Counter groups are the
+left / center / right thirds of the kitchen.
+
+**Rule-based twin** (`coop.rule_partner.RulePlayer`, `mode="partner"`). It follows a card on
+top of `SimulatedHuman`:
+- its rule keys rank jobs in card order;
+- order commitment is one of those keys;
+- it drops its current job, with empty hands, when a higher rule's job appears;
+- it waits by its station (5 steps) when yielding;
+- its station, counter and fallback choices follow the rules.
+
+With a full view (3 seeds, scripted steady ego) adherence per card is ≥ 95%; single rules
+are 85–100%. With `mode="ego"` it does what a card *wants* (the aligned ego of Gate 2), as
+agent type `rule_ego` with `align: own | other`.
+
+**LLM partner** (`coop.llm_partner`, `partner.type: llm`). It uses the ego's stack
+(observation, macros, executor, retry). Its system prompt has:
+- the intro;
+- the backstory;
+- "Your habits" (the active rules with their fallbacks);
+- the priority order.
+
+Each reply is `{"goal", "order", "reconsider_when", "action"}`, and the previous goal is shown
+at the next decision. **Reminders** (`remind: true`) add one line per rule whose opportunity
+holds now, from the partner's own view, only at the decision the rule is about; every
+reminder is logged. `enforce` is only a hook. There is no memory across episodes and no
+probe. The partner's backend uses `ICRL_PARTNER_*` env vars; the serving script defaults them
+to the ego's server.
+
+**Runner.** `partner: {type: scripted | rule | llm, cards, complexity, remind, enforce, backend,
+max_tokens}`; `personas` are card names. Per episode it writes:
+- `summary.json` → `rules` (adherence and alignment counts per rule) and `partner_llm` (calls,
+  invalid replies, fallbacks, reminders);
+- `rule_events.jsonl` (every judgment with a note);
+- `partner_truth.json` (card, trace);
+- `partner_log.json` (the partner's prompts).
+
+Per run folder, `run_meta.json` records models, the serving version, decoding settings and
+every prompt template with its hash. The ego never sees the card, the rules, the partner's
+intentions or reminders, or any rule score; `tests/test_coop_persona.py` searches every ego
+prompt for them. Old configs give identical steps and prompts, checked against the previous
+commit with the mock backend.
+
+**Gates** (plan section 10; stop after them and report):
+
+```bash
+python -m coop.days configs/coop/persona_gate1_twin.yaml --out outputs/gate1_twin --workers 16
+```
+```bash
+bash scripts/run_qwen38_days.sh configs/coop/persona_gate1.yaml --out outputs/gate1_llm --workers 48
+```
+```bash
+python -m coop.persona_check gate1 outputs/gate1_llm --twin outputs/gate1_twin --out outputs/gate1_llm/gate1.json
+```
+```bash
+python -m coop.voi --cards configs/coop/personas/batch1.yaml --layout open2_env --open-orders 2 --view-radius 2 --seeds 0 1 2 3 4 5 6 7 --eval-seeds 8 9 10 11 12 13 14 15 --out outputs/gate2_twin.json
+```
+```bash
+bash scripts/run_qwen38_days.sh configs/coop/persona_gate2.yaml --out outputs/gate2_llm --workers 48
+```
+```bash
+python -m coop.persona_check gate2 outputs/gate2_llm --out outputs/gate2_llm/gate2.json
+```
+
+`persona_check gate1` reports, per card:
+- score against the neutral partner;
+- adherence per rule on the calibration seeds 0–1 and the judge seeds 2–3 (bar 70%, frozen
+  before judging);
+- adherence by episode;
+- partner invalid replies and fallbacks;
+- the distinctness classifier.
+
+`persona_check gate2` and `voi --cards` report aligned − generic and aligned − misaligned for
+score and alignment, on two seed sets and per card.
+
 ## Pooling seeds (`coop.analyze` with several folders)
 
 Folders of the same config run on different run seeds (e.g. a replication) can be

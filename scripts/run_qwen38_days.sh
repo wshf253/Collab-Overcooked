@@ -16,6 +16,9 @@
 # behind one endpoint (vLLM --data-parallel-size), so twice as many requests run at once; give
 # about GPUS x MAX_NUM_SEQS workers. PARALLEL=tp splits one copy over the GPUs instead (each call
 # is faster, fewer at once); use it if your vLLM has no --data-parallel-size.
+# LLM persona partner (partner.type llm): it reads ICRL_PARTNER_BASE_URL / ICRL_PARTNER_MODEL /
+# ICRL_PARTNER_API_KEY / COOP_PARTNER_CHAT_TEMPLATE_KWARGS, which default to the ego's server, so one
+# server serves both players. Set them to use a second server (e.g. another model) for the partner.
 # Adapted from ICRL4AHT scripts/run_qwen38_coop.sh (same variables and defaults).
 set -euo pipefail
 
@@ -67,6 +70,8 @@ if [[ -z "${ICRL_LLM_BASE_URL:-}" ]]; then
     [[ -n "$REASONING_PARSER" ]] && ARGS+=(--reasoning-parser "$REASONING_PARSER")
     [[ "$LANGUAGE_MODEL_ONLY" == 1 ]] && ARGS+=(--language-model-only)
     [[ "$ENFORCE_EAGER" == 1 ]] && ARGS+=(--enforce-eager)
+    export COOP_SERVING_VERSION="vllm $("$SERVE_ENV/bin/vllm" --version 2>/dev/null | tail -n 1); model $MODEL_PATH"
+    export LLM_MODEL_PATH="$MODEL_PATH"
     "$SERVE_ENV/bin/vllm" serve "$MODEL_PATH" "${ARGS[@]}" > "$LOG_DIR/vllm.log" 2>&1 &
     SERVER_PID=$!
     echo "Starting vLLM ($MODEL_PATH). Log: $LOG_DIR/vllm.log"
@@ -91,6 +96,12 @@ fi
 cat "$LOG_DIR/thinking_check.jsonl"
 export COOP_CHAT_TEMPLATE_KWARGS="${COOP_CHAT_TEMPLATE_KWARGS:-$PICKED}"
 echo "chat_template_kwargs: $COOP_CHAT_TEMPLATE_KWARGS"
+# The persona partner uses the same server unless its own variables are set.
+export ICRL_PARTNER_BASE_URL="${ICRL_PARTNER_BASE_URL:-$ICRL_LLM_BASE_URL}"
+export ICRL_PARTNER_MODEL="${ICRL_PARTNER_MODEL:-$ICRL_LLM_MODEL}"
+export COOP_PARTNER_CHAT_TEMPLATE_KWARGS="${COOP_PARTNER_CHAT_TEMPLATE_KWARGS:-$COOP_CHAT_TEMPLATE_KWARGS}"
+if [[ -n "${ICRL_LLM_API_KEY:-}" ]]; then export ICRL_PARTNER_API_KEY="${ICRL_PARTNER_API_KEY:-$ICRL_LLM_API_KEY}"; fi
+echo "partner endpoint: $ICRL_PARTNER_BASE_URL ($ICRL_PARTNER_MODEL)"
 
 if [[ -z "${LAYOUTS:-}" ]]; then
     "$PY" -m coop.days "$CONFIG" "$@" 2>&1 | tee "$LOG_DIR/run.log"

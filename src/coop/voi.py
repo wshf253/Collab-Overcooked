@@ -120,6 +120,37 @@ def screen(layout: str, personas: List[str], seeds: List[int], horizon: int, men
     return out
 
 
+def card_screen(cards_path: Path, layout: str, seeds: List[int], horizon: int, menu: List[str],
+                complexity=None, view_radius=None, open_orders: int = 1, eval_seeds: List[int] = None) -> Dict:
+    """Gate 2 with the rule-based twin (docs/PERSONA_PARTNER_PLAN_v2.md, section 10): for each
+    card, the twin partner with scripted egos aligned (does what this card wants), generic
+    (steady) and misaligned (does what the next card wants). Reports aligned - generic and
+    aligned - misaligned for score and alignment, on ``seeds`` and re-measured on ``eval_seeds``."""
+    from .partner import SimulatedHuman
+    from .persona_check import composite, gate2_table, play_rule_episode
+    from .rule_partner import RulePlayer
+    from .rules import NEUTRAL, load_cards
+    cards = {n: c for n, c in load_cards(cards_path).items() if n != NEUTRAL}
+    names = list(cards)
+    rows = {}
+    for i, name in enumerate(names):
+        rules = cards[name].active(complexity)
+        other = cards[names[(i + 1) % len(names)]].active(complexity)
+        for seed in list(seeds) + list(eval_seeds or []):
+            egos = {"aligned": RulePlayer(rules, menu, "ego", "aligned"),
+                    "generic": SimulatedHuman(PERSONAS["steady"], "steady"),
+                    "misaligned": RulePlayer(other, menu, "ego", "misaligned")}
+            for ego_name, player in egos.items():
+                r = play_rule_episode(menu, layout, horizon, seed, rules, player, view_radius, open_orders)
+                al, _ = composite(r, "ego")
+                rows[(ego_name, name, seed)] = {"score": r["score"], "alignment": al}
+    sets = {"selection": list(seeds)}
+    if eval_seeds:
+        sets["new seeds"] = list(eval_seeds)
+    return {"cards_file": str(cards_path), "layout": layout, "seed_sets": sets,
+            "tables": {k: gate2_table(rows, v) for k, v in sets.items()}, "folder": f"twin on {layout}"}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--layout", default="open_env")
@@ -134,8 +165,21 @@ def main(argv=None):
                     help="new seeds to re-measure the chosen policies on (empty: skip)")
     ap.add_argument("--ego-set", choices=EGO_SETS, default="all",
                     help="which ego policies compete (commit: one order at a time; needs --open-orders > 1)")
+    ap.add_argument("--cards", type=Path,
+                    help="Gate 2 with the rule-based twin of each persona card (aligned / generic / misaligned egos)")
+    ap.add_argument("--complexity", type=int, default=None, help="--cards: active rules per card (default all)")
     ap.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
+    if args.cards:
+        from .persona_check import format_gate2
+        res = card_screen(args.cards, args.layout, args.seeds, args.horizon, args.menu, args.complexity,
+                          args.view_radius, args.open_orders, args.eval_seeds)
+        print(format_gate2(res))
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(res, indent=1, default=str))
+            print(f"wrote {args.out}")
+        return
     if args.personas is None:
         args.personas = DEFAULT_PERSONAS + [p for p in PERSONAS if p not in DEFAULT_PERSONAS]
     elif args.personas == ["order"]:

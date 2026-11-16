@@ -492,7 +492,11 @@ class SoloDish(Check):
         return out
 
     def opportunity(self, view, tracker, me, target=None):
-        return self.reminder(tracker.k) if self.p["dish"] in open_orders(view, tracker.n_open) else None
+        d = self.p["dish"]
+        if d in open_orders(view, tracker.n_open) and view.players[me].held_object is None \
+                and tracker.order_of.get("partner") != d:
+            return self.reminder(tracker.k)
+        return None
 
 
 class SplitDish(Check):
@@ -514,11 +518,13 @@ class SplitDish(Check):
     def opportunity(self, view, tracker, me, target=None):
         d = self.p["dish"]
         k = tracker.k
-        if any(k.utensil_status(view, u)[0] in ("processing", "finished") and k.utensil_status(view, u)[1] == d
-               for u in k.utensils) or any(u in tracker.complete_since for u in k.utensils
-                                           if tracker.info.product_of(k.kind_of[u], k.utensil_status(view, u)[2]) == d):
-            return self.reminder(k)
-        return self.reminder(k) if d in open_orders(view, tracker.n_open) else None
+        finish_ready = any(k.utensil_status(view, u)[0] == "finished" and k.utensil_status(view, u)[1] == d
+                           for u in k.utensils) or any(
+            k.utensil_status(view, u)[0] == "loaded"
+            and tracker.info.product_of(k.kind_of[u], k.utensil_status(view, u)[2]) == d for u in k.utensils)
+        choosing = view.players[me].held_object is None and d in open_orders(view, tracker.n_open) \
+            and tracker.order_of.get("partner") != d
+        return self.reminder(k) if finish_ready or choosing else None
 
 
 class OrderPriority(Check):
@@ -587,7 +593,8 @@ class OrderPriority(Check):
         return out
 
     def opportunity(self, view, tracker, me, target=None):
-        if view.players[me].held_object is None and len(open_orders(view, tracker.n_open)) >= 2:
+        opened = open_orders(view, tracker.n_open)
+        if view.players[me].held_object is None and len(opened) >= 2 and tracker.order_of.get("partner") not in opened:
             return self.reminder(tracker.k)
         return None
 
@@ -612,8 +619,10 @@ class Serves(Check):
 
     def opportunity(self, view, tracker, me, target=None):
         k = tracker.k
-        if any(k.utensil_status(view, u)[0] in ("processing", "finished") and k.utensil_status(view, u)[1] in
-               tracker.info.menu for u in k.utensils):
+        held = view.players[me].held_object
+        if (held is None or held.name == "dish") and any(
+                k.utensil_status(view, u)[0] == "finished" and k.utensil_status(view, u)[1] in tracker.info.menu
+                for u in k.utensils):
             return self.reminder(k)
         return None
 
@@ -661,7 +670,14 @@ class HandoverSpot(Check):
         return out
 
     def opportunity(self, view, tracker, me, target=None):
-        return self.reminder(tracker.k) if view.players[me].held_object is not None else None
+        held = view.players[me].held_object
+        if held is None or held.name in tracker.info.menu or held.name == "dish":
+            return None
+        info = tracker.info
+        if any(info.loadable(view, u, held.name) and any(held.name in inputs for _, (kd, inputs) in info.k.recipes.items()
+                                                          if kd == info.kind(u)) for u in info.k.utensils):
+            return None     # it can go where it belongs: no reason to put it down
+        return self.reminder(tracker.k)
 
 
 def wanted_by_card(ev: Event, rules: List[Rule], tracker: Tracker, state) -> bool:

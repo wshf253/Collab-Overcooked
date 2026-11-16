@@ -241,6 +241,36 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.13 LLM persona partner: built, gates not yet run (plan v2, work packages 1–2, 2026-11-17)
+Built: rule library (10 rules), 4 pilot cards + neutral, predicates, rule-based twin, LLM persona
+partner (intention state, reminders), runner integration, rule egos, gate tools, tests
+(`docs/coop-setting.md`, "LLM persona partner"). Old configs are unchanged (mock check).
+
+**Twin check** (scripted steady ego, open2_env, 2 orders):
+- **Full view:** adherence ≥ 95% per card; single rules 85–100%.
+- **Radius 2 (the gate setting):** lower for `order_priority` (57–90%), because the twin acts
+  on its own view while the predicates use the full state.
+- **Rare rules** (opportunities per 8 episodes): `on_contention` 1–7 (real loading races are
+  rare), `wants_supplies` 0–1 (only the stew has two inputs), `handover_spot` 2–10 (nobody needs
+  to hand over in an open kitchen). They may be unmeasurable and unlearnable with this menu
+  and layout; the gate report must say so.
+- **Distinctness:** 88% (chance 25%).
+
+**Preliminary Gate 2 with the twin** (radius 2; seeds 0–3, then re-measured on 4–7):
+
+| | seeds 0–3 | seeds 4–7 |
+|---|---|---|
+| aligned − generic, alignment | +21 ± 6 | +28 ± 5 |
+| aligned − generic, score | −25 ± 12 | −14 ± 5 |
+| aligned − misaligned, score | +38 ± 23 | +61 ± 21 |
+
+- Doing what this partner wants costs points against the reactive generic ego, worst for p3,
+  whose serving bottlenecks.
+- A wrong partner model is very costly: p2 +150 to +170, where nobody serves.
+
+This is the plan's open point §15 (alignment headroom, but no score headroom over generic). It
+needs a decision before the learning runs.
+
 ### 3.12 Replication of §3.11 (`days_model_v2_rep`, run seeds 4–7, 2026-11-17)
 
 | comparison (paired, SE over runs) | v2 (seeds 0–3) | **replication (4–7)** |
@@ -452,6 +482,8 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
    "order habits" table in `coop.analyze`). Still to run: the value screen with 16+ seeds, then
    `configs/coop/days_llm_orders.yaml` (`open2_env`, 2 open orders, radius 2, all controls).
 3. **A second model**, to check generality.
+0. **Current plan: `docs/PERSONA_PARTNER_PLAN_v2.md`.** Work packages 1–2 are built (§3.13); next
+   are Gates 1 and 2 with Qwen as partner, then stop and report.
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated
