@@ -185,7 +185,11 @@ class MockBackend(Backend):
                     act = rng.choice(hits)
                     break
             out = {}
-            if '"doing"' in text:
+            if '"reconsider_when"' in text:      # LLM persona partner: intention state
+                opened = re.search(r"Open orders \(oldest first\): ([\w_]+)", last)
+                out.update({"goal": "mock goal", "order": opened.group(1) if opened else "none",
+                            "reconsider_when": "mock"})
+            elif '"doing"' in text:
                 opened = re.search(r"Open orders \(oldest first\): ([\w_]+)", last)
                 out["partner"] = {"doing": "mock", "order": opened.group(1) if opened else "unknown",
                                   "next": "pickup(dish, dish_dispenser)", "habit": "mock habit"}

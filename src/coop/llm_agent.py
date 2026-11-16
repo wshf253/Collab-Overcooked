@@ -261,10 +261,12 @@ class LLMAgent(Agent):
     # ------------------------------------------------------------------ #
     # Prompts
     # ------------------------------------------------------------------ #
-    def _system_prompt(self) -> str:
-        k, ctx = self.kitchen, self.context
-        menu = list(ctx["menu"])
-        recipes = "\n\n".join(k.recipe_text(d) for d in menu)
+    INTRO = ("You are one of two cooks in a kitchen game (an adapted Overcooked). You and your partner "
+             "have the same abilities: either of you can use any station you can reach. You cannot talk "
+             "to your partner; there are no messages. Your partner is a person with their own habits. "
+             "Watch what they do and work with them.")
+
+    def _reply_template(self) -> str:
         if self.structured:
             reply = ('{"partner": {"doing": "<what your partner is doing now, a few words>", '
                      '"order": "<the open order they are working on: its dish name, or \\"none\\" or '
@@ -276,11 +278,22 @@ class LLMAgent(Agent):
                      'to do>", "action": "<one action>"}')
         else:
             reply = '{"action": "<one action>"}'
+        return reply
+
+    def _persona_parts(self) -> List[str]:
+        """Extra system-prompt parts after the action list (the LLM partner's persona)."""
+        return []
+
+    def _on_reply(self, parsed: Optional[dict], record: Dict[str, Any], t: int) -> None:
+        """Hook after each parsed decision reply (the LLM partner keeps its intention)."""
+
+    def _system_prompt(self) -> str:
+        k, ctx = self.kitchen, self.context
+        menu = list(ctx["menu"])
+        recipes = "\n\n".join(k.recipe_text(d) for d in menu)
+        reply = self._reply_template()
         parts = [
-            "You are one of two cooks in a kitchen game (an adapted Overcooked). You and your partner "
-            "have the same abilities: either of you can use any station you can reach. You cannot talk "
-            "to your partner; there are no messages. Your partner is a person with their own habits. "
-            "Watch what they do and work with them.",
+            self.INTRO,
             f"Goal: complete as many orders as possible in {ctx['horizon']} time steps. " + (
                 "One order is open at a time. A correct delivery gives +20 points and opens the next "
                 "order; " if ctx.get("open_orders", 1) <= 1 else
@@ -292,7 +305,7 @@ class LLMAgent(Agent):
             f"Kitchen map (you are player {ctx['index']}):\n{k.map_text()}",
             f"Dishes that can be ordered:\n\n{recipes}",
             f"Actions (choose exactly one each time you are asked):\n{GRAMMAR}",
-        ]
+        ] + self._persona_parts()
         if self.belief is not None:
             parts.insert(3, f"What you can see: only cells within {self.belief.radius} steps of you in every "
                          "direction (including diagonals). For everything else you are told what you saw "
@@ -417,6 +430,7 @@ class LLMAgent(Agent):
                 reason = self.executor.check(m, state) or ""
             read = (parsed or {}).get("partner")
             record["attempts"].append({"action": action, "partner": read, "error": reason})
+            self._on_reply(parsed, record, t)
             if self.structured and clean_read(read):
                 record["read"] = clean_read(read)
             if m is not None and not reason:
