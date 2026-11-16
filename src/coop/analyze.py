@@ -2,6 +2,12 @@
 
     PYTHONPATH=src:lib/overcooked_ai python -m coop.analyze outputs/days_llm [--out outputs/days_llm/analysis.json]
 
+Several folders of the same config run on different run seeds (e.g. a replication)
+are pooled: every table is computed over all their runs, and the paired differences
+are also shown per folder, to see whether the folders agree.
+
+    python -m coop.analyze outputs/days_model_v2 outputs/days_model_v2_rep --out outputs/model_pooled.json
+
 Reports, per condition and persona:
 
 * score minus the reference ego on identical episodes (mean ± standard error),
@@ -70,7 +76,7 @@ def load_episodes(out: Path) -> List[Dict[str, Any]]:
         log_path = d / "agent_log.json"
         log = json.loads(log_path.read_text()) if log_path.exists() else {}
         eps.append({"condition": cond, "persona": s["persona"], "seed": s["run_seed"], "day": s["day"],
-                    "episode": s["episode"], "summary": s, "log": log, "dir": d})
+                    "episode": s["episode"], "summary": s, "log": log, "dir": d, "folder": str(out)})
     return eps
 
 
@@ -287,8 +293,63 @@ def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
             "action_mix": Counter(c.split("(")[0] for c in chosen)}
 
 
-def analyse(out: Path) -> Dict[str, Any]:
-    eps = load_episodes(out)
+POOL_IGNORED = {"name", "run_seeds"}      # config keys allowed to differ between pooled folders
+
+
+def check_poolable(outs: List[Path], allow_code_change: bool = False) -> List[str]:
+    """Folders can be pooled if their configs match except for name and run seeds, the
+    seeds do not overlap, and the episode-playing code was the same. Returns warnings;
+    raises ValueError otherwise."""
+    cfgs, versions, seeds = [], [], {}
+    for o in outs:
+        try:
+            cfgs.append(json.loads((o / "config.json").read_text()))
+        except OSError:
+            raise ValueError(f"{o} has no config.json (not a coop.days output folder?)")
+        try:
+            versions.append(json.loads((o / "code_version.json").read_text()).get("hash"))
+        except (OSError, ValueError):
+            versions.append(None)
+        for sd in cfgs[-1].get("run_seeds") or []:
+            if sd in seeds:
+                raise ValueError(f"run seed {sd} is in both {seeds[sd]} and {o}: pooled runs must be different runs")
+            seeds[sd] = o
+    base = cfgs[0]
+    for o, c in zip(outs[1:], cfgs[1:]):
+        diff = sorted(k for k in set(base) | set(c) if k not in POOL_IGNORED and base.get(k) != c.get(k))
+        if diff:
+            raise ValueError(f"{outs[0]} and {o} differ in {diff}; only folders of the same setting can be pooled")
+    warnings = []
+    if len({v for v in versions}) > 1:
+        msg = f"the folders were run with different code versions {versions}"
+        if not allow_code_change:
+            raise ValueError(msg + "; pass --allow-code-change if the change cannot affect results")
+        warnings.append("WARNING: " + msg)
+    return warnings
+
+
+def paired_table(eps: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """condition -> {"vs_<other>": mean ± SE over runs of the paired difference}."""
+    by_key = {(e["condition"], e["persona"], e["seed"], e["day"], e["episode"]): e for e in eps}
+    k = lambda e: (e["persona"], e["seed"], e["day"], e["episode"])
+    conds = sorted({e["condition"] for e in eps if e["condition"] != REFERENCE}, key=lambda c: (c != "direct", c))
+    out: Dict[str, Dict[str, Any]] = {}
+    for cond in conds:
+        allc = [e for e in eps if e["condition"] == cond]
+        out[cond] = {"vs_reference": _paired_runs(
+            allc, lambda e: (by_key.get((REFERENCE,) + k(e)) or {}).get("summary", {}).get("score"))}
+        for other in COMPARE_TO:
+            if other in conds and other != cond:
+                out[cond][f"vs_{other}"] = _paired_runs(
+                    allc, lambda e, o=other: (by_key.get((o,) + k(e)) or {}).get("summary", {}).get("score"))
+    return out
+
+
+def analyse(out) -> Dict[str, Any]:
+    """``out``: one output folder, or a list of folders to pool (see check_poolable)."""
+    outs = [Path(o) for o in out] if isinstance(out, (list, tuple)) else [Path(out)]
+    eps = [e for o in outs for e in load_episodes(o)]
+    out = outs[0]
     ref = {(e["persona"], e["seed"], e["day"], e["episode"]): e["summary"]["score"]
            for e in eps if e["condition"] == REFERENCE}
     by_key = {(e["condition"], e["persona"], e["seed"], e["day"], e["episode"]): e for e in eps}
@@ -380,6 +441,12 @@ def analyse(out: Path) -> Dict[str, Any]:
     report["orders"] = order_table(eps, conditions)
     report["reads"] = read_table(eps)
     report["model_health"] = model_health(eps)
+    report["folders"] = [str(o) for o in outs]
+    if len(outs) > 1:
+        report["by_folder"] = {str(o): {"seeds": sorted({e["seed"] for e in eps if e["folder"] == str(o)}),
+                                        "paired": paired_table([e for e in eps if e["folder"] == str(o)])}
+                               for o in outs}
+        report["by_folder"]["pooled"] = {"seeds": sorted({e["seed"] for e in eps}), "paired": paired_table(eps)}
     return report
 
 
@@ -671,6 +738,21 @@ def format_report(rep: Dict[str, Any]) -> str:
     for cond, o in rep["overall"].items():
         lines.append(f"{cond:<{width}}{_fmt(o.get('vs_reference_runs')):>16}"
                      + "".join(f"{_fmt(o.get(f'vs_{c}_runs')) if c != cond else '-':>20}" for c in others))
+    if rep.get("by_folder"):
+        lines.append("\n== the paired differences per folder (do the folders agree?) ==")
+        names = list(rep["by_folder"])
+        short = [n if n == "pooled" else Path(n).name for n in names]
+        seeds = ["seeds " + ",".join(map(str, rep["by_folder"][n]["seeds"])) for n in names]
+        colw = max([18] + [len(x) + 2 for x in short + seeds])
+        comparisons = ["vs_reference"] + [f"vs_{c}" for c in others]
+        for comp in comparisons:
+            lines.append(f"{comp.replace('_', ' ', 1):<{width}}" + "".join(f"{x:>{colw}}" for x in short))
+            lines.append(f"{'':<{width}}" + "".join(f"{x:>{colw}}" for x in seeds))
+            for cond in rep["overall"]:
+                cells = [_fmt(rep["by_folder"][n]["paired"].get(cond, {}).get(comp)) if comp != f"vs_{cond}" else "-"
+                         for n in names]
+                lines.append(f"{cond:<{width}}" + "".join(f"{c:>{colw}}" for c in cells))
+            lines.append("")
     lines.append("\n== per persona: vs reference (all days | first day -> last day), vs direct ==")
     for cond, rows in rep["conditions"].items():
         lines.append(f"{cond}")
@@ -830,12 +912,25 @@ def format_report(rep: Dict[str, Any]) -> str:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("run_dir", type=Path)
+    ap.add_argument("run_dirs", type=Path, nargs="+",
+                    help="output folder(s); several folders of the same config on different run seeds are pooled")
     ap.add_argument("--out", type=Path, help="also write the full report as JSON")
+    ap.add_argument("--allow-code-change", action="store_true",
+                    help="pool folders run with different code versions (only if the change cannot affect results)")
     args = ap.parse_args(argv)
-    rep = analyse(args.run_dir)
+    warnings = []
+    if len(args.run_dirs) > 1:
+        try:
+            warnings = check_poolable(args.run_dirs, args.allow_code_change)
+        except ValueError as err:
+            raise SystemExit(f"cannot pool: {err}")
+    rep = analyse(args.run_dirs)
     if not rep["conditions"]:
-        raise SystemExit(f"no LLM-condition episodes under {args.run_dir}/runs")
+        raise SystemExit(f"no LLM-condition episodes under {[str(d) for d in args.run_dirs]}")
+    if len(args.run_dirs) > 1:
+        print(f"POOLED over {len(args.run_dirs)} folders: " + ", ".join(map(str, args.run_dirs)))
+    for w in warnings:
+        print(w)
     print(format_report(rep))
     if args.out:
         args.out.write_text(json.dumps(rep, indent=1, default=str))

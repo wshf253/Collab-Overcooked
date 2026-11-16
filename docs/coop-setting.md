@@ -595,6 +595,19 @@ Order habits with the LLM ego (all six conditions):
 lab-run --new --spare --gpus 1 --cpus 24 --mem 110G -- env MAX_NUM_SEQS=48 bash scripts/run_qwen38_days.sh configs/coop/days_llm_orders.yaml --out outputs/days_orders --workers 48
 ```
 
+## Pooling seeds (`coop.analyze` with several folders)
+
+Folders of the same config run on different run seeds (e.g. a replication) can be
+analysed together. Every table is computed over all runs, and the paired differences
+are also shown per folder, so you can see whether the folders agree:
+
+```bash
+PYTHONPATH=src:lib/overcooked_ai python -m coop.analyze outputs/days_model_v2 outputs/days_model_v2_rep --out outputs/days_model_pooled.json
+```
+
+It refuses folders whose configs differ in anything but the name and run seeds, folders
+that share a run seed, and (unless `--allow-code-change`) folders run with different code.
+
 ## Comparing two settings (`coop.compare`)
 
 Does a setting (e.g. partial view) change how much a condition helps? Run the
