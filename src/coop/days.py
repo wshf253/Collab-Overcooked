@@ -43,6 +43,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import statistics
@@ -64,13 +65,19 @@ from .orders import normalize_menu
 from .partner import PERSONAS, SimulatedHuman, Traits
 from .kitchen import Kitchen
 from .profile import MODEL_SECTIONS, avoid_options, score_profile, truth_profile
+from . import rule_partner  # noqa: F401  (registers the "rule_ego" agent type)
+from .llm_partner import LLMPartner, LLMPartnerPlayer
+from .rule_eval import RuleEvaluator, intent_target
+from .rule_partner import RulePlayer
+from .rules import NEUTRAL, load_cards, load_library
 
 REFERENCE = "_reference"
 CONFIG_KEYS = {
     "name", "layout", "menu", "horizon", "wrong_delivery_penalty", "no_repeat", "days",
     "episodes_per_day", "ego_index", "personas", "custom_personas", "run_seeds", "agent",
-    "conditions", "reference_agent", "open_orders", "view_radius",
+    "conditions", "reference_agent", "open_orders", "view_radius", "partner",
 }
+PARTNER_TYPES = ("scripted", "rule", "llm")
 
 
 @dataclass
@@ -97,6 +104,11 @@ class DaysConfig:
     # Played on the same episodes for the paired comparison; null disables it.
     reference_agent: Optional[Dict[str, Any]] = field(
         default_factory=lambda: {"type": "scripted", "persona": "steady"})
+    # Who the partner is (docs/PERSONA_PARTNER_PLAN_v2.md, section 5). None = the scripted
+    # SimulatedHuman personas (unchanged behaviour). {type: rule | llm, cards: <yaml>,
+    # complexity: K, remind: bool, enforce: bool, backend: {...}, max_tokens: n}: personas
+    # are card names (or "neutral") played by the rule-based twin or the LLM persona partner.
+    partner: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.days < 1 or self.episodes_per_day < 1 or self.horizon < 1:
@@ -114,8 +126,27 @@ class DaysConfig:
         clash = set(self.custom_personas) & set(PERSONAS)
         if clash:
             raise ValueError(f"custom_personas reuse built-in names: {sorted(clash)}")
-        for p in self.personas:
-            persona_traits(p, self.custom_personas)     # raises on unknown names or bad traits
+        ptype = self.partner_type()
+        if ptype not in PARTNER_TYPES:
+            raise ValueError(f"partner.type must be one of {PARTNER_TYPES}, got {ptype!r}")
+        if ptype == "scripted":
+            for p in self.personas:
+                persona_traits(p, self.custom_personas)     # raises on unknown names or bad traits
+        else:
+            if not self.partner.get("cards"):
+                raise ValueError("partner.cards must name a persona-card file")
+            cards = self.cards()
+            for p in self.personas:
+                if p not in cards:
+                    raise ValueError(f"persona {p!r} is not a card in {self.partner['cards']}: {sorted(cards)}")
+            k = self.partner.get("complexity")
+            if k is not None and (not isinstance(k, int) or k < 0):
+                raise ValueError("partner.complexity must be a non-negative int (or null for all rules)")
+            if ptype == "llm" and not isinstance(self.partner.get("backend"), dict):
+                raise ValueError("partner.type llm needs partner.backend")
+        for name in list(self.conditions) + ([REFERENCE] if self.reference_agent is not None else []):
+            if self.condition_agent(name).get("type") == "rule_ego" and ptype == "scripted":
+                raise ValueError(f"condition {name!r}: a rule_ego needs persona cards (partner.type rule or llm)")
         menu = normalize_menu(self.menu)
         with contextlib.redirect_stdout(io.StringIO()):
             mdp = OvercookedGridworld.from_layout_name(self.layout)
@@ -151,6 +182,21 @@ class DaysConfig:
                     if donors.get(p) not in self.personas or donors[p] == p:
                         raise ValueError(f"condition {name!r}: persona {p!r} needs a different donor "
                                          f"persona from this config (got {donors.get(p)!r})")
+
+    def partner_type(self) -> str:
+        return (self.partner or {}).get("type", "scripted")
+
+    def cards(self):
+        if getattr(self, "_cards", None) is None:
+            path = Path(self.partner["cards"])
+            self._cards = load_cards(path if path.is_absolute() else REPO / path)
+        return self._cards
+
+    def card_files(self) -> List[str]:
+        """Rule library and card file: part of the code version when the partner uses cards."""
+        if self.partner_type() == "scripted":
+            return []
+        return ["configs/coop/rules/library.yaml", str(self.partner["cards"])]
 
     def condition_agent(self, name: str) -> Dict[str, Any]:
         if name == REFERENCE:
@@ -240,13 +286,16 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
                              wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat,
                              open_orders=cfg.open_orders)
     start = env.reset(seed)
-    traits = persona_traits(persona, cfg.custom_personas)
-    partner = SimulatedHuman(traits, persona)
-    partner.reset(env.mdp, other, seed, view_radius=cfg.view_radius)    # same view rules for everyone
     context = {"day": day, "episode": episode, "episode_seed": seed, "layout": cfg.layout,
                "horizon": cfg.horizon, "menu": normalize_menu(cfg.menu), "index": ego,
                "partner_index": other, "wrong_delivery_penalty": cfg.wrong_delivery_penalty,
                "open_orders": cfg.open_orders, "view_radius": cfg.view_radius}
+    partner, rules, traits = make_partner(cfg, persona, context)
+    partner.reset(env.mdp, other, seed, view_radius=cfg.view_radius)    # same view rules for everyone
+    evaluator = None
+    if rules is not None:
+        evaluator = RuleEvaluator(rules, load_library(), Kitchen(env.mdp, ego, start), normalize_menu(cfg.menu),
+                                  ego, other, cfg.open_orders, env.mdp)
     agent.begin_episode(env.mdp, ego, context)
     ep_dir.mkdir(parents=True, exist_ok=True)
     with open(ep_dir / "steps.jsonl", "w") as steps:
@@ -256,8 +305,17 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
             moves[ego] = agent.act(state, t)
             moves[other] = partner.act(state, t)
             order = env.current_order
+            pre = state
+            intents = None
+            if evaluator is not None:
+                kit = evaluator.tracker.k
+                intents = {"ego": intent_target(agent, kit), "partner": intent_target(partner, kit)}
             state, reward, _, info = env.step([m[0] for m in moves], [m[1] for m in moves])
             agent.observe(t, reward, info)
+            if hasattr(partner, "observe"):
+                partner.observe(t, reward, info)
+            if evaluator is not None:
+                evaluator.observe(t, pre, state, intents)
             steps.write(json.dumps({
                 "t": t, "order": order,
                 "actions": [_jsonable_action(m[0]) for m in moves], "params": [m[1] for m in moves],
@@ -273,25 +331,84 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     agent.end_episode(dict(public, context=context))
     agent_log = agent.episode_log()
     probe = agent_log.get("probe") if isinstance(agent_log, dict) else None
-    # Truth for this episode: avoids is asked only over utensils the orders needed and
-    # both players can reach (computed here from the map and orders, not from the agent).
-    dishes = [o["name"] for o in summary["orders"]]
-    avoid = avoid_options(Kitchen(env.mdp, ego, start), dishes)
-    truth = truth_profile(traits, avoid, dishes if cfg.open_orders > 1 else None)
-    if probe and probe.get("partner_profile"):
-        summary["probe"] = score_profile(probe["partner_profile"], truth,
-                                         probe.get("stage_shares"),
-                                         partner.summary()["stage_share_when_acting"])
+    psummary = partner.summary()
+    if traits is not None:
+        # Scripted personas. Truth for this episode: avoids is asked only over utensils the
+        # orders needed and both players can reach (from the map and orders, not the agent).
+        dishes = [o["name"] for o in summary["orders"]]
+        avoid = avoid_options(Kitchen(env.mdp, ego, start), dishes)
+        truth = truth_profile(traits, avoid, dishes if cfg.open_orders > 1 else None)
+        if probe and probe.get("partner_profile"):
+            summary["probe"] = score_profile(probe["partner_profile"], truth,
+                                             probe.get("stage_shares"),
+                                             psummary["stage_share_when_acting"])
     if isinstance(agent_log, dict) and "usage" in agent_log:
         summary["llm_usage"] = dict(agent_log["usage"], invalid_actions=agent_log.get("invalid_actions"),
                                     fallbacks=agent_log.get("fallbacks"))
+    if cfg.partner_type() != "scripted":
+        summary["partner_type"] = cfg.partner_type()
+        summary["rules"] = evaluator.summary()
+        if cfg.partner_type() == "llm":
+            summary["partner_llm"] = {k: psummary.get(k) for k in
+                                      ("usage", "invalid_actions", "fallbacks", "decisions", "reminders",
+                                       "goal_changes")}
+        with open(ep_dir / "rule_events.jsonl", "w") as f:
+            for j in evaluator.judgments:
+                f.write(json.dumps(asdict(j)) + "\n")
     (ep_dir / "summary.json").write_text(json.dumps(summary, indent=1))
-    (ep_dir / "partner_truth.json").write_text(json.dumps({
-        "persona": persona, "index": other, "traits": asdict(traits),
-        "profile": truth, "avoid_options": avoid, "summary": partner.summary(),
-        "events": partner.events, "trace": partner.trace}))
+    if traits is not None:
+        truth_doc = {"persona": persona, "index": other, "traits": asdict(traits),
+                     "profile": truth, "avoid_options": avoid, "summary": psummary,
+                     "events": partner.events, "trace": partner.trace}
+    else:
+        truth_doc = {"persona": persona, "index": other, "type": cfg.partner_type(),
+                     "card": cfg.cards()[persona].to_dict(cfg.partner.get("complexity")),
+                     "summary": psummary, "events": partner.events, "trace": partner.trace}
+    (ep_dir / "partner_truth.json").write_text(json.dumps(truth_doc, default=str))
+    if hasattr(partner, "log"):
+        (ep_dir / "partner_log.json").write_text(json.dumps(partner.log(), default=str))
     (ep_dir / "agent_log.json").write_text(json.dumps(agent_log))
     return summary
+
+
+def make_partner(cfg: DaysConfig, persona: str, context: Dict[str, Any]):
+    """(partner player, active rules or None, scripted traits or None) for this persona."""
+    ptype = cfg.partner_type()
+    if ptype == "scripted":
+        traits = persona_traits(persona, cfg.custom_personas)
+        return SimulatedHuman(traits, persona), None, traits
+    card = cfg.cards()[persona]
+    k = cfg.partner.get("complexity")
+    rules = card.active(k)
+    if ptype == "rule":
+        return RulePlayer(rules, normalize_menu(cfg.menu), "partner", persona), rules, None
+    p = cfg.partner
+    agent = LLMPartner(p["backend"], card, load_library(), complexity=k, remind=p.get("remind", True),
+                       enforce=p.get("enforce", False), max_tokens=p.get("max_tokens", 400))
+    ctx = {key: v for key, v in context.items() if key not in ("index", "partner_index")}
+    return LLMPartnerPlayer(agent, ctx), rules, None
+
+
+def resolve_agent_spec(cfg: DaysConfig, condition: str, persona: str) -> Dict[str, Any]:
+    """The ego spec for one run. A ``rule_ego`` gets the rules of its card: ``align: own``
+    (this persona's card), ``other`` (the next persona's card, or ``card: <name>``)."""
+    spec = cfg.condition_agent(condition)
+    if spec.get("type") != "rule_ego":
+        return spec
+    align = spec.get("align", "own")
+    cards = cfg.cards()
+    if spec.get("card"):
+        name = spec["card"]
+    elif align == "own":
+        name = persona
+    elif align == "other":
+        ps = [p for p in cfg.personas if p != NEUTRAL] or cfg.personas
+        name = ps[(ps.index(persona) + 1) % len(ps)] if persona in ps else ps[0]
+    else:
+        raise ValueError(f"rule_ego align must be own or other, got {align!r}")
+    rules = cards[name].active(cfg.partner.get("complexity"))
+    return {"type": "rule_ego", "rules": [r.to_dict() for r in rules], "menu": normalize_menu(cfg.menu),
+            "card": name, "align": align}
 
 
 # ---------------------------------------------------------------------- #
@@ -392,7 +509,7 @@ def run_one(cfg_dict: Dict[str, Any], out: str, condition: str, persona: str, ru
     episodes: List[Dict[str, Any]] = []
     resumed = 0
     try:
-        agent = make_agent(cfg.condition_agent(condition))
+        agent = make_agent(resolve_agent_spec(cfg, condition, persona))
         agent.set_memory({})
         for day in range(1, cfg.days + 1):
             day_results = []
@@ -449,14 +566,47 @@ def _metrics(summary: Dict[str, Any]) -> Dict[str, Any]:
 # Files whose changes alter how episodes are played (analysis/screening code is left out).
 CODE_FILES = ["src/coop/" + f for f in ("agents.py", "days.py", "env.py", "executor.py", "kitchen.py",
                                         "llm.py", "llm_agent.py", "nav.py", "orders.py", "partner.py",
-                                        "profile.py", "view.py")] + ["lib/overcooked_ai/overcooked_ai_py/mdp/overcooked_mdp.py"]
+                                        "profile.py", "view.py", "rules.py", "rule_eval.py",
+                                        "rule_partner.py", "llm_partner.py")] + ["lib/overcooked_ai/overcooked_ai_py/mdp/overcooked_mdp.py"]
 REPO = Path(__file__).resolve().parents[2]
 
 
-def code_version(layout: str) -> str:
-    """Hash of the code and layout that play episodes, to stop a resume from mixing versions."""
+def write_run_meta(cfg: DaysConfig, out: Path) -> None:
+    """Models, serving, decoding and every prompt template with its hash (plan invariant 8)."""
+    from .llm_agent import GRAMMAR, HANDOVER_RULES, LLMAgent
+    from .llm_partner import INTENTION_REPLY, NEUTRAL_PRIORITY, PARTNER_INTRO, PRIORITY
+    from .profile import PROFILE_GUIDE
+    env_keys = ["ICRL_LLM_MODEL", "ICRL_LLM_BASE_URL", "COOP_CHAT_TEMPLATE_KWARGS", "ICRL_PARTNER_MODEL",
+                "ICRL_PARTNER_BASE_URL", "COOP_PARTNER_CHAT_TEMPLATE_KWARGS", "COOP_SERVING_VERSION",
+                "LLM_MODEL_PATH"]
+    templates = {"ego_intro": LLMAgent.INTRO, "grammar": GRAMMAR, "handover_rules": HANDOVER_RULES,
+                 "probe_guide": PROFILE_GUIDE, "partner_intro": PARTNER_INTRO, "partner_priority": PRIORITY,
+                 "partner_neutral_priority": NEUTRAL_PRIORITY, "partner_reply": INTENTION_REPLY}
+    if cfg.partner_type() != "scripted":
+        templates["rule_library"] = (REPO / "configs/coop/rules/library.yaml").read_text()
+        cards = Path(cfg.partner["cards"])
+        templates["persona_cards"] = (cards if cards.is_absolute() else REPO / cards).read_text()
+    meta = {"written": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "ego_backends": {c: cfg.condition_agent(c).get("backend") for c in cfg.conditions
+                             if cfg.condition_agent(c).get("type") == "llm"},
+            "partner": cfg.partner, "env": {k: os.environ.get(k) for k in env_keys if os.environ.get(k)},
+            "prompt_templates": {k: {"sha256": hashlib.sha256(v.encode()).hexdigest()[:16], "text": v}
+                                 for k, v in templates.items()}}
+    path = out / "run_meta.json"
+    history = json.loads(path.read_text()).get("history", []) if path.exists() else []
+    old = json.loads(path.read_text()) if path.exists() else None
+    if old is not None and {k: old.get(k) for k in ("partner", "prompt_templates", "env")} != \
+            {k: meta.get(k) for k in ("partner", "prompt_templates", "env")}:
+        history.append({k: old.get(k) for k in ("written", "env")})
+    meta["history"] = history
+    path.write_text(json.dumps(meta, indent=1))
+
+
+def code_version(layout: str, extra: Optional[List[str]] = None) -> str:
+    """Hash of the code and layout that play episodes, to stop a resume from mixing versions.
+    ``extra``: files a config's partner depends on (rule library, persona cards)."""
     h = hashlib.sha256()
-    files = CODE_FILES + [f"lib/overcooked_ai/overcooked_ai_py/data/layouts/{layout}.layout"]
+    files = CODE_FILES + [f"lib/overcooked_ai/overcooked_ai_py/data/layouts/{layout}.layout"] + list(extra or [])
     for rel in files:
         h.update(rel.encode())
         h.update((REPO / rel).read_bytes())
@@ -473,11 +623,14 @@ def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print,
     cfg_path = out / "config.json"
     if cfg_path.exists():
         old = json.loads(cfg_path.read_text())
-        if old != json.loads(json.dumps(cfg_dict)):
+        new = json.loads(json.dumps(cfg_dict))
+        for key in [k for k in new if k not in old and new[k] is None]:
+            del new[key]        # keys added later with their default (e.g. partner: null) are the same config
+        if old != new:
             raise ValueError(f"{cfg_path} holds a different config; use a new --out to start over")
     else:
         cfg_path.write_text(json.dumps(cfg_dict, indent=1))
-    version = code_version(cfg.layout)
+    version = code_version(cfg.layout, cfg.card_files())
     ver_path = out / "code_version.json"
     if ver_path.exists():
         recorded = json.loads(ver_path.read_text())
@@ -498,6 +651,9 @@ def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print,
         spec = cfg.condition_agent(c)
         if spec.get("type") == "llm":
             build_backend(spec.get("backend") or {}, f"condition {c}")
+    if cfg.partner_type() == "llm":
+        build_backend(cfg.partner.get("backend") or {}, "partner")
+    write_run_meta(cfg, out)
     # Control conditions read memory from finished runs of their source condition: second phase.
     phases = [[c for c in conditions if not cfg.memory_source(c)],
               [c for c in conditions if cfg.memory_source(c)]]

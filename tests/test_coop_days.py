@@ -192,7 +192,7 @@ class RunTests(unittest.TestCase):
         self.run_cfg(cfg)
         real = days.code_version
         try:
-            days.code_version = lambda layout: "something-else"
+            days.code_version = lambda layout, *extra: "something-else"
             with self.assertRaises(ValueError):
                 self.run_cfg(cfg)
             res = run_all(cfg, self.tmp / "out", log=silent, allow_code_change=True)
