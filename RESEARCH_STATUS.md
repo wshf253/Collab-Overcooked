@@ -241,7 +241,35 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
-### 3.11 Partner-model file fixed (`days_model_v2`, 2026-11-16) — current main result
+### 3.12 Replication of §3.11 (`days_model_v2_rep`, run seeds 4–7, 2026-11-17)
+
+| comparison (paired, SE over runs) | v2 (seeds 0–3) | **replication (4–7)** |
+|---|---|---|
+| tom_memory − direct | +6.1 ± 2.5 | +10.3 ± 3.3 |
+| tom_struct − direct | +16.7 ± 3.4 | +13.8 ± 2.9 |
+| tom_struct_model − direct | +23.5 ± 3.6 | +16.9 ± 3.7 |
+| tom_struct − tom_memory | +10.6 ± 3.3 | +3.5 ± 2.5 |
+| tom_struct_model − tom_memory | +17.4 ± 3.0 | +6.6 ± 3.6 |
+| swap − tom_struct_model | about −9 | **+0.7 ± 3.2** |
+| placebo − tom_struct_model | about −11 | **−2.4 ± 2.2** |
+
+- **Replicates:** structured ToM helps (+14 to +17 vs direct), and adding the file helps a little more.
+  The ordering direct < tom_memory < tom_struct ≤ tom_struct_model holds in both runs.
+- **Does not replicate: the partner-specific memory effect.** In the replication, another partner's
+  file does as well as the own file. The pooled estimate is about −4 (swap) and −7 (placebo), but
+  the two runs disagree.
+- **This fits what the files contain (§3.11):** a division-of-labour plan that is nearly the same
+  for every partner, plus a station quirk every persona shares. With these scripted partners there
+  is little partner-specific knowledge to gain.
+- **One behavioural sign:** the own file leaves the carrot soup to `favourite_dish` (ego share 13%)
+  and the swapped file does not (29%), +16 ± 3. In v2 this difference was absent (+1 ± 12).
+- **Reads and probe:** the same as v2. The probe names no habit.
+- **Conclusion for the paper:** structured ToM (reading the partner each step and carrying the
+  read forward) is the robust gain. Partner-specific learning across days is not shown with the
+  scripted partners. This motivates the LLM-simulated personas, which can differ in more ways than
+  order choice.
+
+### 3.11 Partner-model file fixed (`days_model_v2`, 2026-11-16)
 Same setting and conditions as §3.10, with the file now written after every episode (100%, about
 210 words), in its own call framed around the partner's choices. Mean ± SE over 20 runs.
 
@@ -381,12 +409,10 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
     notes shift it the donor's way (small effects).
   - The score gain is largest with `steady`, though, so its source is not yet known.
   - The probe never names an order habit.
-  - **Structured ToM + the agent's own partner-model file does best** (+23.5 ± 3.6 vs direct,
-    +17.4 ± 3.0 vs tom_memory, §3.11).
-  - Another partner's file or a neutral one loses about 9–11, so this memory is partner-specific
-    (one run).
-  - The file does not make the reads of the partner's order more accurate. It probably works
-    through "what I should do with them".
+  - **Structured ToM is the robust gain** (+14 to +17 vs direct in two runs). The agent's own
+    partner file adds a little (tom_struct_model +17 to +24).
+  - **Partner-specific memory is not established:** swap / placebo lost 9–11 in the first run and
+    nothing in the replication (§3.12). The files mostly hold a generic division of labour.
 - **When the map fixes the roles,** the gain is general skill.
 - **When roles are free** (open kitchen, one order; replicated three times, §3.4 and §3.9):
   - ToM gives about +8, and the agent's own notes add about +5.
