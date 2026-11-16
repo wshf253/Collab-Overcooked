@@ -241,6 +241,42 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.11 Partner-model file fixed (`days_model_v2`, 2026-11-16) — current main result
+Same setting and conditions as §3.10, with the file now written after every episode (100%, about
+210 words), in its own call framed around the partner's choices. Mean ± SE over 20 runs.
+
+| condition | vs direct | vs tom_memory |
+|---|---|---|
+| tom_memory (free ToM + notes) | +6.1 ± 2.5 | - |
+| tom_model (free ToM + file) | +4.8 ± 3.1 | −1.3 ± 3.3 |
+| tom_struct (structured ToM, no memory) | +16.7 ± 3.4 | +10.6 ± 3.3 |
+| **tom_struct_model** (structured ToM + file) | **+23.5 ± 3.6** | **+17.4 ± 3.0** |
+| tom_struct_model_swap (another partner's file) | +14.7 ± 3.8 | +8.6 ± 3.5 |
+| tom_struct_model_placebo (neutral file) | +12.3 ± 2.4 | +6.2 ± 2.8 |
+
+- **Structured ToM + the agent's own partner file is the best condition so far,** about 17 points
+  per episode above tom_memory.
+- **The file only helps together with structured ToM.** With free ToM it does nothing (tom_model
+  ≈ tom_memory), and tom_model again has many repeated invalid actions (123 fallbacks).
+- **The own file beats other files.** Swap and placebo fall back to about the tom_struct level or
+  slightly below: about −9 and −11 vs tom_struct_model (from the vs-direct numbers; the paired SE is
+  printed by `coop.analyze` from 2026-11-16). This is the clearest partner-specific memory effect so
+  far, but from one run.
+- **Not visible in the reads.**
+  - Order accuracy is about the same with or without the file (68–80%) and does not rise over days.
+  - The swapped file lowers it by about 3–5 points for every partner; placebo does not.
+  - Next-action accuracy is 2–4 points higher with the own file.
+  - So the file helps mostly through "what I should do with them", not by tracking the partner's
+    order better.
+- **The largest gain is again with `steady`** (+37.5 vs direct), which has no order habit. The gain
+  is not specific to the habit partners.
+- **First sign of the probe naming a habit:** `favourite_dish` is identified 0.25 with
+  tom_struct_model, vs 0.00–0.05 for the conditions without a file. Placebo gets 0.12.
+- **No learning curve over days** in the score: tom_struct_model −14.5 / −21 / −21 / −25.5 / −10
+  vs the reference, episode SE about 7.
+- **To check:** the paired controls (rerun `coop.analyze`), what the files say, and a replication
+  with new seeds.
+
 ### 3.10 Structured ToM and partner-model file (`days_model`, 2026-11-14)
 
 **The file results here are not valid.** In most episodes the file was never written: the
@@ -325,9 +361,12 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
     notes shift it the donor's way (small effects).
   - The score gain is largest with `steady`, though, so its source is not yet known.
   - The probe never names an order habit.
-  - **Structured ToM without memory does best there** (+13.0 ± 3.2 vs direct, §3.10). The agent
-    tracks the partner's order only for `newest_first`, and adapts within an episode (leaves the
-    carrot soup to `favourite_dish`). A rewritten partner file adds nothing and may hurt over days.
+  - **Structured ToM + the agent's own partner-model file does best** (+23.5 ± 3.6 vs direct,
+    +17.4 ± 3.0 vs tom_memory, §3.11).
+  - Another partner's file or a neutral one loses about 9–11, so this memory is partner-specific
+    (one run).
+  - The file does not make the reads of the partner's order more accurate. It probably works
+    through "what I should do with them".
 - **When the map fixes the roles,** the gain is general skill.
 - **When roles are free** (open kitchen, one order; replicated three times, §3.4 and §3.9):
   - ToM gives about +8, and the agent's own notes add about +5.

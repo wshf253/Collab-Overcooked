@@ -664,10 +664,11 @@ def format_report(rep: Dict[str, Any]) -> str:
         lines.append(f"{cond:<{width}}" + "".join(f"{_fmt(v):>14}" for v in o["vs_reference_by_day"].values())
                      + f"{_fmt(o.get('vs_direct')):>14}")
     lines.append("\n== paired differences, mean±SE over runs (a run = persona x seed; quote these) ==")
-    lines.append(f"{'condition':<{width}}{'vs reference':>16}{'vs direct':>16}{'vs tom_memory':>16}")
+    others = [c for c in COMPARE_TO if c in rep["overall"]]      # e.g. direct, tom_memory, tom_struct_model
+    lines.append(f"{'condition':<{width}}{'vs reference':>16}" + "".join(f"{'vs ' + c:>20}" for c in others))
     for cond, o in rep["overall"].items():
-        lines.append(f"{cond:<{width}}{_fmt(o.get('vs_reference_runs')):>16}{_fmt(o.get('vs_direct_runs')):>16}"
-                     f"{_fmt(o.get('vs_tom_memory_runs')):>16}")
+        lines.append(f"{cond:<{width}}{_fmt(o.get('vs_reference_runs')):>16}"
+                     + "".join(f"{_fmt(o.get(f'vs_{c}_runs')) if c != cond else '-':>20}" for c in others))
     lines.append("\n== per persona: vs reference (all days | first day -> last day), vs direct ==")
     for cond, rows in rep["conditions"].items():
         lines.append(f"{cond}")
