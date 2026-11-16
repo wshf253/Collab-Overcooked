@@ -274,8 +274,28 @@ Same setting and conditions as §3.10, with the file now written after every epi
   tom_struct_model, vs 0.00–0.05 for the conditions without a file. Placebo gets 0.12.
 - **No learning curve over days** in the score: tom_struct_model −14.5 / −21 / −21 / −25.5 / −10
   vs the reference, episode SE about 7.
-- **To check:** the paired controls (rerun `coop.analyze`), what the files say, and a replication
-  with new seeds.
+- **What the files say** (seed 0, days 1/3/5):
+  - **Real models of the partner, revised over days.** For example, `steady` day 5: "highly flexible…
+    contradicting previous assumptions of strict station loyalty".
+  - **Mostly a division-of-labour convention:** "I handle the simple boiled dishes on pot1; they do
+    the complex dishes on pot0; don't touch pot0 / chopping_board0". It is nearly the same for
+    every partner. That explains why `steady` gains most, and why another partner's file still
+    keeps much of the gain.
+  - **"Station loyalty" is a quirk of the scripted partner,** not a persona trait. When several
+    stations of a kind are free it always takes the first in map order (`_select_station`), so
+    pot0 / chopping_board0 / oven0. The agent found a real regularity, but one every persona
+    shares, so a swapped file is still right about it.
+  - **Partner-specific content is partial:**
+    - `favourite_dish`: "exclusively handles complex dishes (Baked Carrot Soup, Stew)". The soup
+      is right; it over-generalises to "complex".
+    - `newest_first`: the habit is never named, only station anchoring and dish types.
+  - **Self-fulfilling:** "they do the complex dishes" partly follows from the agent's own decision
+    to take every simple dish.
+  - **Word-limit trimming dropped the last sections** (e.g. `favourite_dish` day 5 has an empty
+    "What I should do with them"). `bound_words` keeps lines in order until the limit, so the
+    advice at the end is the first thing lost. `coop.analyze` now reports the trimmed share.
+    Fixing this changes play, so do it after the replication.
+- **To check:** the paired controls (rerun `coop.analyze`) and the replication with new seeds.
 
 ### 3.10 Structured ToM and partner-model file (`days_model`, 2026-11-14)
 

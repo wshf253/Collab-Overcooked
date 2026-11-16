@@ -511,6 +511,7 @@ def model_health(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
         upd = log.get("model_update")
         if upd is not None:
             c["written"] += bool(upd.get("ok"))
+            c["cut"] += bool(upd.get("cut"))
             c["not_json"] += upd.get("reason") == "reply was not JSON"
             c["words"] += upd.get("words") or 0
         else:
@@ -520,7 +521,8 @@ def model_health(eps: List[Dict[str, Any]]) -> Dict[str, Any]:
             c["words"] += len(((probe or {}).get("partner_model") or "").split())
     return {cond: {"episodes": c["episodes"], "written": c["written"] / c["episodes"],
                    "not_json": c["not_json"] / c["episodes"],
-                   "mean_words": c["words"] / c["written"] if c["written"] else None}
+                   "mean_words": c["words"] / c["written"] if c["written"] else None,
+                   "cut": c["cut"] / c["written"] if c["written"] else None}
             for cond, c in sorted(acc.items())}
 
 
@@ -705,7 +707,8 @@ def format_report(rep: Dict[str, Any]) -> str:
         for cond, h in health.items():
             words = "-" if h["mean_words"] is None else f"{h['mean_words']:.0f}"
             lines.append(f"  {cond:<30} episodes {h['episodes']:>4}  written {100 * h['written']:>3.0f}%  "
-                         f"reply not JSON {100 * h['not_json']:>3.0f}%  mean words {words}")
+                         f"reply not JSON {100 * h['not_json']:>3.0f}%  mean words {words}"
+                         + ("" if h.get("cut") is None else f"  trimmed to the word limit {100 * h['cut']:>3.0f}%"))
             if h["written"] < 0.9:
                 lines.append("    WARNING: the file was often not written; this condition mostly ran without it")
     reads = rep.get("reads") or {}
