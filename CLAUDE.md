@@ -2,6 +2,8 @@
 
 - Research context and current results: read `RESEARCH_STATUS.md` first, and update it when
   results or the setting change. Usage and commands: `docs/coop-setting.md`.
+- The current work plan is `docs/PERSONA_PARTNER_PLAN_v2.md` (LLM persona partner, gates, then
+  multi-day learning). Its decisions are fixed; follow its order of work and stop points.
 - The research code is `src/coop/` (tests in `tests/test_coop_*.py`). The original benchmark
   (`src/main.py`, `evaluation.py`) and the env defaults must keep their original behaviour.
 - Environment: Python 3.11 with `requirements-coop.txt` (`numpy<2`); run with
