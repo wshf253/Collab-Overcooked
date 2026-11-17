@@ -634,7 +634,7 @@ generator.
 
 | rule | adherent (partner) | aligned (ego) |
 |---|---|---|
-| `own_station(s)` | loads of that kind go into `s`, unless `s` cannot take the item | the ego's interactions with that kind avoid `s` (a load is not counted if no other station could take it) |
+| `own_station(s)` | loads of that kind go into `s`, unless `s` cannot take the item or was busy when the partner decided | the ego's interactions with that kind avoid `s` (a load is not counted if no other station could take it) |
 | `solo_dish(d)` | while `d` is open and the partner has `d` work, its choices are on `d` | the ego does not touch `d`; other choices while `d` is open count as aligned |
 | `split_dish(d)` | each start or plating of `d` is adherent if the ego did it, or the partner after the batch or food waited ≥ 20 steps (what it works on otherwise is order choice, not this rule) | each start / plate / delivery of `d` is aligned if the ego did it |
 | `order_priority(w)` | its next pick after its committed order is gone is the `w` order (any of the last 10 steps); leaving the committed order counts only if that order still had work for it | the ego's picks avoid the partner's committed order |

@@ -319,9 +319,9 @@ resumed on the new code.
   - a scripted player's job choice.
 - **Twin after this fix:** `serves(self)` 100% (full view) / 93% (radius 2); cards 95–100% / 92–95%.
 
-The ordinary passes are also cleaner than they look. Most `own_station` misses (p1 oven1, p4
-board1) are the fallback: the partner's goal says its own station still held finished food.
-The check treats that station as free.
+Most `own_station` misses (p1 oven1, p4 board1) had the same cause: the partner's goal says its
+own station still held finished food when it decided, and the station was empty by the time it
+loaded. `own_station` now also uses the decision step. Twin: 100% (full view), 93–100% (radius 2).
 
 
 Next: re-score `gate1_llm` and read the remaining failures, then revise the cards in a new card

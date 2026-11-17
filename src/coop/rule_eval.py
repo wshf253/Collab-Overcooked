@@ -221,6 +221,7 @@ class Tracker:
         self.held_from: Dict[str, Optional[str]] = {"ego": None, "partner": None}
         self.complete_since: Dict[str, int] = {}               # complete, unstarted batch
         self.ready_since: Dict[str, int] = {}                  # finished food in the utensil
+        self.empty_since: Dict[str, int] = {}                  # utensil empty
         self.order_of: Dict[str, Optional[str]] = {"ego": None, "partner": None}
         self.last_choice: Dict[str, int] = {"ego": -10 ** 6, "partner": -10 ** 6}
         self.last_event_t: Dict[str, Optional[int]] = {"ego": None, "partner": None}
@@ -314,6 +315,9 @@ class Tracker:
                 self.loaders.pop(u, None)
                 self.starter.pop(u, None)
                 self._first_load_t.pop(u, None)
+                self.empty_since.setdefault(u, t if self.started and t > 1 else 0)
+            else:
+                self.empty_since.pop(u, None)
             if status == "loaded" and self.info.product_of(self.k.kind_of[u], self.k.utensil_status(post, u)[2]):
                 self.complete_since.setdefault(u, t)
             else:
@@ -472,7 +476,12 @@ class OwnStation(Check):
             if not u or ctx.k.kind_of.get(u) != self.kind:
                 continue
             if ev.who == "partner" and ev.verb == "put":
-                ok = u == self.s or not ctx.info.loadable(ctx.pre, self.s, ev.item)
+                # the fallback applies if its station was busy when it decided (it may have
+                # been emptied by the time the item went in)
+                free = ctx.info.loadable(ctx.pre, self.s, ev.item) and (
+                    ctx.k.utensil_status(ctx.pre, self.s)[0] != "empty"
+                    or ctx.tr.empty_since.get(self.s, 10 ** 9) <= ctx.decided("partner"))
+                ok = u == self.s or not free
                 out.append(self.J(ctx, "partner", ok, f"loaded {u}"))
             elif ev.who == "ego" and ev.verb in ("put", "start", "fill", "pickup"):
                 if u != self.s:

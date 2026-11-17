@@ -256,7 +256,7 @@ class LLMPartnerTests(unittest.TestCase):
         rs = rescore(self.tmp / "out")
         self.assertEqual(rs["failed"], [])
         self.assertEqual(rs["rescored"], rs["episodes"])
-        changed = ("split_dish", "serves", "waits_for_commit")
+        changed = ("split_dish", "serves", "waits_for_commit", "own_station")
         key = lambda j: (j["t"], j["rule"], j["side"], j["value"], j["note"])
         for orig in (self.tmp / "out").glob("runs/*/*/seed*/day*/ep*/rule_events.jsonl"):
             a = sorted(key(json.loads(x)) for x in orig.read_text().splitlines() if not x.startswith('{"t"') or
