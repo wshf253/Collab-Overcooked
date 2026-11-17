@@ -636,15 +636,15 @@ generator.
 |---|---|---|
 | `own_station(s)` | loads of that kind go into `s`, unless `s` cannot take the item | the ego's interactions with that kind avoid `s` (a load is not counted if no other station could take it) |
 | `solo_dish(d)` | while `d` is open and the partner has `d` work, its choices are on `d` | the ego does not touch `d`; other choices while `d` is open count as aligned |
-| `split_dish(d)` | it does not start, plate or deliver `d`, unless the batch or food waited ≥ 20 steps; while it has `d` prep work, its choices are `d` prep | each start / plate / delivery of `d` is aligned if the ego did it |
+| `split_dish(d)` | each start or plating of `d` is adherent if the ego did it, or the partner after the batch or food waited ≥ 20 steps (what it works on otherwise is order choice, not this rule) | each start / plate / delivery of `d` is aligned if the ego did it |
 | `order_priority(w)` | its next pick after its committed order is gone is the `w` order (any of the last 10 steps); leaving the committed order counts only if that order still had work for it | the ego's picks avoid the partner's committed order |
-| `serves(self)` | when serving work exists, its choices are serving | each plating / delivery is aligned if the partner did it |
+| `serves(self)` | while finished food is waiting (not while it cooks), its choices are serving | each plating / delivery is aligned if the partner did it |
 | `serves(ego)` | when serving work exists, its choices are not serving (unless food waited ≥ 20 steps) | each plating / delivery is aligned if the ego did it |
 | `wants_supplies` | it does not fetch a missing item of its incomplete batch from the dispenser for 15 steps (taking it from a counter is fine) | each missing item that reaches its batch is aligned if the ego supplied it (directly or through a counter) |
 | `handover_spot(g)` | its counter placements are in group `g` (or `g` was full) | the ego's placements are in `g` (when `g` had room) |
 | `on_takeover` | after the ego takes over its things, its next choice within 30 steps is not on that dish (only if it had other work) | the ego's interactions with existing items do not take over the partner's (allowed when another rule asks for it) |
 | `on_contention(m)` | in a race to load the same utensil (both carry an item for it, both within 3 cells), resolved by who uses it first: `yields`: the ego got it, or the partner after 5 steps; `insists`: the partner got it, or still had it as its target | `yields`: the ego got it; `insists`: the partner got it |
-| `waits_for_commit` | its first choice after a new order opens comes ≥ 5 steps later or after the ego's first choice | the ego (empty-handed at the opening) makes a choice within 5 steps |
+| `waits_for_commit` | if it was free when a new order opened (nothing held, no open order of its own), its first choice comes ≥ 5 steps later or after the ego's first choice; carrying on with its own order is not judged | the ego (empty-handed at the opening) makes a choice within 5 steps |
 
 A rule with no opportunity in an episode is undefined, not perfect. Counter groups are the
 left / center / right thirds of the kitchen.
@@ -725,6 +725,25 @@ python -m coop.persona_check gate2 outputs/gate2_llm --out outputs/gate2_llm/gat
 
 ```bash
 python -m coop.persona_check why outputs/gate1_llm --examples 3 --out outputs/gate1_llm/why.json
+```
+
+`persona_check rescore` re-judges a finished folder with the current rule checks, without any
+model calls:
+- **How:** it replays each episode's recorded actions on its seed and checks the replay
+  matches (score and positions). Replaying with unchanged checks reproduces the original
+  judgments exactly.
+- **Output:** it writes `rules.rescored.json` and `rule_events.rescored.jsonl` next to the
+  originals.
+- **Exception:** `on_contention` keeps its original judgments, because the players' intended
+  targets are not saved.
+- **Reading the results:** `gate1`, `gate2` and `why` read the re-scored files with
+  `--rescored`.
+
+```bash
+python -m coop.persona_check rescore outputs/gate1_llm --workers 8
+```
+```bash
+python -m coop.persona_check gate1 outputs/gate1_llm --twin outputs/gate1_twin --rescored
 ```
 
 `persona_check gate2` and `voi --cards` report aligned − generic and aligned − misaligned for

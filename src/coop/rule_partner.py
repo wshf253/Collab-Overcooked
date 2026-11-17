@@ -115,7 +115,8 @@ class RulePlayer(SimulatedHuman):
         if self.mode != "partner" or "waits_for_commit" not in self.by_id or self.me.held_object is not None:
             return False
         now = self._now()
-        return any(0 <= now - o["t"] < COMMIT_WAIT and o.get("ego_t") is None for o in self.rt.new_orders)
+        return any(0 <= now - o["t"] < COMMIT_WAIT and o.get("ego_t") is None and o.get("partner_free", True)
+                   for o in self.rt.new_orders)
 
     def _supply_wait(self) -> Optional[Dict[str, Any]]:
         if self.mode != "partner" or "wants_supplies" not in self.by_id or self.me.held_object is not None:

@@ -31,6 +31,16 @@ Why does the partner break a rule? (any folder with a rule-following partner)
 * per card and rule: adherent / judged decisions, the partner's non-adherent decisions
   grouped by what happened (numbers masked), how often a reminder for that rule was shown
   at the deciding step, and examples with the partner's stated goal and chosen action.
+
+Re-score saved episodes with the current rule checks (no model calls)
+
+    python -m coop.persona_check rescore outputs/gate1_llm [--workers 8]
+
+replays each episode's recorded actions (``steps.jsonl``) on the same seed, checks that the
+replay matches (score and positions), and writes ``rule_events.rescored.jsonl`` and
+``rules.rescored.json`` next to the originals. ``on_contention`` keeps its original
+judgments (it needs the players' intended targets, which are not saved). ``gate1``,
+``gate2`` and ``why`` read the re-scored files with ``--rescored``.
 """
 from __future__ import annotations
 
@@ -151,8 +161,9 @@ def classify(rows: List[Tuple[str, int, Dict[str, float]]]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------- #
 # Gate 1
 # ---------------------------------------------------------------------- #
-def gate1(out: Path, calibrate: List[int], judge: List[int], bar: float) -> Dict[str, Any]:
+def gate1(out: Path, calibrate: List[int], judge: List[int], bar: float, rescored: bool = False) -> Dict[str, Any]:
     eps = load_episodes(out)
+    n_rescored = use_rescored(eps) if rescored else 0
     cfg = json.loads((out / "config.json").read_text())
     raw, finals = _layout_items(out)
     width = 9
@@ -165,6 +176,8 @@ def gate1(out: Path, calibrate: List[int], judge: List[int], bar: float) -> Dict
     by = {(e["persona"], e["seed"], e["day"], e["episode"]): e for e in eps}
     rep: Dict[str, Any] = {"folder": str(out), "partner": (cfg.get("partner") or {}).get("type"),
                            "calibrate_seeds": calibrate, "judge_seeds": judge, "bar": bar, "cards": {}}
+    if rescored:
+        rep["rescored"] = {"episodes": len(eps), "rescored": n_rescored}
     for card in cards:
         mine = [e for e in eps if e["persona"] == card]
         if not mine:
@@ -215,6 +228,9 @@ def format_gate1(rep: Dict[str, Any], twin: Optional[Dict[str, Any]] = None) -> 
     lines = [f"== Gate 1: {rep['folder']} (partner: {rep['partner']}) ==",
              f"neutral partner score {f(rep['neutral_score'])}; bar {pct(rep['bar'])} on judge seeds "
              f"{rep['judge_seeds']} (calibration seeds {rep['calibrate_seeds']})"]
+    if rep.get("rescored"):
+        r = rep["rescored"]
+        lines.append(f"rule results re-scored with the current checks: {r['rescored']} of {r['episodes']} episodes")
     for card, c in rep["cards"].items():
         infra = ""
         if c.get("invalid_per_episode") is not None:
@@ -287,8 +303,10 @@ def gate2_table(rows, seeds: Optional[List[int]] = None) -> Dict[str, Any]:
     return out
 
 
-def gate2(out: Path) -> Dict[str, Any]:
+def gate2(out: Path, rescored: bool = False) -> Dict[str, Any]:
     eps = load_episodes(out)
+    if rescored:
+        use_rescored(eps)
     rows = gate2_rows(eps)
     seeds = sorted({s for _, _, s in rows})
     half = len(seeds) // 2
@@ -322,15 +340,105 @@ def format_gate2(rep: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+RESCORED_RULES, RESCORED_EVENTS = "rules.rescored.json", "rule_events.rescored.jsonl"
+
+
+def replay_rules(ep_dir: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Re-judge one saved episode with the current rule checks by replaying its actions."""
+    import contextlib
+    import io
+    from dataclasses import asdict
+    from .days import DaysConfig
+    from .env import ContinuousOrderEnv
+    from .kitchen import Kitchen
+    from .orders import normalize_menu
+    from .rule_eval import Judgment, RuleEvaluator
+    from .rules import load_library
+    known = set(DaysConfig.__dataclass_fields__)
+    dc = DaysConfig(**{k: v for k, v in cfg.items() if k in known})
+    summary = json.loads((ep_dir / "summary.json").read_text())
+    persona, kind = summary["persona"], summary.get("kind", "interaction")
+    menu = dc.menu if (kind == "eval" or not dc.schedule) else dc.menu_for(summary["day"])
+    env = ContinuousOrderEnv(menu, layout=dc.layout, horizon=dc.horizon,
+                             wrong_delivery_penalty=dc.wrong_delivery_penalty, no_repeat=dc.no_repeat,
+                             open_orders=dc.open_orders, order_mode=dc.order_lists)
+    with contextlib.redirect_stdout(io.StringIO()):
+        start = env.reset(summary["seed"])
+    ego, other = dc.ego_index, 1 - dc.ego_index
+    rules = dc.cards()[persona].active(dc.partner.get("complexity"))
+    ev = RuleEvaluator(rules, load_library(), Kitchen(env.mdp, ego, start), normalize_menu(menu), ego, other,
+                       dc.open_orders, env.mdp, view_radius=dc.view_radius)
+    match = True
+    for line in (ep_dir / "steps.jsonl").read_text().splitlines():
+        rec = json.loads(line)
+        acts = [a if isinstance(a, str) else tuple(a) for a in rec["actions"]]
+        pre = env.state
+        with contextlib.redirect_stdout(io.StringIO()):
+            post, _, _, _ = env.step(acts, rec["params"])
+        ev.observe(rec["t"], pre, post, None)
+        if abs(env.score - rec["score"]) > 1e-9 or any(
+                list(p.position) != r["pos"] for p, r in zip(post.players, rec["players"])):
+            match = False
+            break
+    contention = {r.label() for r in rules if r.id == "on_contention"}
+    orig_path = ep_dir / "rule_events.jsonl"
+    kept = [Judgment(**json.loads(x)) for x in (orig_path.read_text().splitlines() if orig_path.exists() else [])
+            if x.strip() and json.loads(x)["rule"] in contention]
+    ev.judgments = [j for j in ev.judgments if j.rule not in contention] + kept
+    return {"match": match, "rules": ev.summary(), "judgments": [asdict(j) for j in ev.judgments]}
+
+
+def _rescore_one(arg):
+    ep, cfg = arg
+    try:
+        r = replay_rules(Path(ep), cfg)
+    except Exception as e:      # report, do not stop the folder
+        return ep, False, repr(e)
+    if r["match"]:
+        (Path(ep) / RESCORED_RULES).write_text(json.dumps(r["rules"], indent=1))
+        with open(Path(ep) / RESCORED_EVENTS, "w") as f:
+            for j in r["judgments"]:
+                f.write(json.dumps(j) + "\n")
+    return ep, r["match"], None
+
+
+def rescore(out: Path, workers: int = 1) -> Dict[str, Any]:
+    cfg = json.loads((out / "config.json").read_text())
+    eps = [(str(p.parent), cfg) for p in sorted(out.glob("runs/*/*/seed*/day*/*/steps.jsonl"))
+           if (p.parent / "rule_events.jsonl").exists()]
+    if workers > 1:
+        from multiprocessing import Pool
+        with Pool(workers) as pool:
+            res = pool.map(_rescore_one, eps, chunksize=2)
+    else:
+        res = [_rescore_one(e) for e in eps]
+    bad = [(ep, err) for ep, ok, err in res if not ok]
+    return {"folder": str(out), "episodes": len(res), "rescored": len(res) - len(bad), "failed": bad}
+
+
+def use_rescored(eps: List[Dict[str, Any]]) -> int:
+    """Swap in re-scored rule results where they exist; returns how many episodes had them."""
+    n = 0
+    for e in eps:
+        path = Path(e["dir"]) / RESCORED_RULES
+        if path.exists():
+            e["summary"] = dict(e["summary"], rules=json.loads(path.read_text()))
+            n += 1
+    return n
+
+
 _NUM = re.compile(r"(?<![A-Za-z_])-?\d+")
 
 
 def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str] = None,
-        examples: int = 3) -> Dict[str, Any]:
+        examples: int = 3, rescored: bool = False) -> Dict[str, Any]:
     """The partner's non-adherent decisions per card and rule, with what it said it was doing."""
     import bisect
     rows: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for ev_path in sorted(out.glob("runs/*/*/seed*/day*/ep*/rule_events.jsonl")):
+    for orig in sorted(out.glob("runs/*/*/seed*/day*/ep*/rule_events.jsonl")):
+        ev_path = orig.parent / RESCORED_EVENTS if rescored else orig
+        if not ev_path.exists():
+            continue
         d = ev_path.parent
         card, seed, day, ep = d.parents[2].name, d.parents[1].name, d.parents[0].name, d.name
         if card == NEUTRAL or (cards and card not in cards):
@@ -375,11 +483,12 @@ def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str]
         r["not"] = r["not"].most_common()
         r["ok"] = r["ok"].most_common()
         out_rows.append(r)
-    return {"folder": str(out), "rows": out_rows}
+    return {"folder": str(out), "rows": out_rows, "rescored": rescored}
 
 
 def format_why(rep: Dict[str, Any]) -> str:
-    lines = [f"== why the partner breaks a rule: {rep['folder']} (all seeds) =="]
+    lines = [f"== why the partner breaks a rule: {rep['folder']} (all seeds"
+             + ("; re-scored with the current checks" if rep.get("rescored") else "") + ") =="]
     for r in rep["rows"]:
         bad = r["n"] - r["adherent"]
         lines.append(f"\n{r['card']}  {r['rule']}: {r['adherent']} of {r['n']} adherent ({100 * r['rate']:.0f}%)")
@@ -414,18 +523,30 @@ def main(argv=None):
     w.add_argument("--rule", help="only rules whose label contains this text")
     w.add_argument("--examples", type=int, default=3)
     w.add_argument("--out", type=Path)
+    rs = sub.add_parser("rescore", help="re-judge saved episodes with the current rule checks (replay)")
+    rs.add_argument("run_dir", type=Path)
+    rs.add_argument("--workers", type=int, default=1)
+    rs.add_argument("--out", type=Path)
+    for sp in (g1, g2, w):
+        sp.add_argument("--rescored", action="store_true",
+                        help="use the files written by 'rescore' (the current rule checks)")
     args = ap.parse_args(argv)
-    if args.cmd == "why":
-        rep = why(args.run_dir, args.card, args.rule, args.examples)
+    if args.cmd == "rescore":
+        rep = rescore(args.run_dir, args.workers)
+        print(f"{rep['rescored']} of {rep['episodes']} episodes re-scored in {rep['folder']}")
+        for ep, err in rep["failed"]:
+            print(f"  not re-scored: {ep}: {err or 'replay did not match the saved steps'}")
+    elif args.cmd == "why":
+        rep = why(args.run_dir, args.card, args.rule, args.examples, args.rescored)
         print(format_why(rep))
     elif args.cmd == "gate1":
-        rep = gate1(args.run_dir, args.calibrate, args.judge, args.bar)
-        twin = gate1(args.twin, args.calibrate, args.judge, args.bar) if args.twin else None
+        rep = gate1(args.run_dir, args.calibrate, args.judge, args.bar, args.rescored)
+        twin = gate1(args.twin, args.calibrate, args.judge, args.bar, args.rescored) if args.twin else None
         print(format_gate1(rep, twin))
         if twin:
             rep["twin"] = twin
     else:
-        rep = gate2(args.run_dir)
+        rep = gate2(args.run_dir, args.rescored)
         print(format_gate2(rep))
     if args.out:
         args.out.write_text(json.dumps(rep, indent=1, default=str))

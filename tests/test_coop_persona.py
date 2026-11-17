@@ -19,7 +19,7 @@ from coop.kitchen import Kitchen  # noqa: E402
 from coop.llm_partner import LLMPartner, macro_stage  # noqa: E402
 from coop.partner import PERSONAS, SimulatedHuman  # noqa: E402
 from coop.persona_check import (format_gate1, format_gate2, format_why, gate1, gate2,  # noqa: E402
-                                play_rule_episode, why)
+                                play_rule_episode, rescore, why)
 from coop.rule_partner import RulePlayer  # noqa: E402
 from coop.rules import (CATEGORIES, NEUTRAL, Rule, category, check_rules, load_cards, load_library,  # noqa: E402
                         parse_rule, render)
@@ -103,7 +103,7 @@ class TwinTests(unittest.TestCase):
         cls.scores = {}
         for name in ("p1", "p2", "p3", "p4"):
             sc = []
-            for seed in range(3):
+            for seed in range(6):       # single rules with ~10 opportunities are noisy over fewer seeds
                 r = play_rule_episode(DEFAULT_MENU, "open2_env", 300, seed, cards[name].rules,
                                       SimulatedHuman(PERSONAS["steady"], "steady"), None, 2)
                 sc.append(r["score"])
@@ -120,8 +120,11 @@ class TwinTests(unittest.TestCase):
             per_card[name][1] += n
             if n >= 10:      # single rules with ~10 opportunities are noisy: a floor, not the bar
                 self.assertGreaterEqual(a / n, 0.80, (name, rule, a, n))
+        # Card level: 0.93. Since waits_for_commit and split_dish judge only the decisions their
+        # texts cover, cards have fewer easy judgments; p2's twin sits at 94-96% because its
+        # order_priority(newest) is ~90% even with a full view (8 seeds: 95.5%).
         for name, (a, n) in per_card.items():
-            self.assertGreaterEqual(a / n, 0.95, (name, a, n))
+            self.assertGreaterEqual(a / n, 0.93, (name, a, n))
 
     def test_twin_completes_orders(self):
         for name, s in self.scores.items():
@@ -235,6 +238,22 @@ class LLMPartnerTests(unittest.TestCase):
             for e in r["examples"]:
                 self.assertIsNotNone(e["chosen"])            # matched to the partner decision that chose it
         self.assertIn("adherent", format_why(w))
+        # Re-scoring replays the saved actions; rules whose checks did not change keep their judgments.
+        rs = rescore(self.tmp / "out")
+        self.assertEqual(rs["failed"], [])
+        self.assertEqual(rs["rescored"], rs["episodes"])
+        changed = ("split_dish", "serves", "waits_for_commit")
+        key = lambda j: (j["t"], j["rule"], j["side"], j["value"], j["note"])
+        for orig in (self.tmp / "out").glob("runs/*/*/seed*/day*/ep*/rule_events.jsonl"):
+            a = sorted(key(json.loads(x)) for x in orig.read_text().splitlines() if not x.startswith('{"t"') or
+                       not any(c in json.loads(x)["rule"] for c in changed))
+            b = sorted(key(json.loads(x)) for x in (orig.parent / "rule_events.rescored.jsonl").read_text().splitlines()
+                       if not any(c in json.loads(x)["rule"] for c in changed))
+            self.assertEqual(a, b, orig)
+        r2 = gate1(self.tmp / "out", [0], [1], 0.7, rescored=True)
+        self.assertEqual(r2["rescored"]["rescored"], r2["rescored"]["episodes"])
+        self.assertIn("re-scored", format_gate1(r2))
+        self.assertTrue(why(self.tmp / "out", rescored=True)["rescored"])
         only = why(self.tmp / "out", cards=["p2"], rule_filter="serves")
         self.assertTrue(all(r["card"] == "p2" and "serves" in r["rule"] for r in only["rows"]))
         g2 = self.tmp / "g2.yaml"

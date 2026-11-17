@@ -270,9 +270,42 @@ seeds 2–3.
 
   The new `persona_check why` report shows which decisions break them.
 
-Next: read `why`, then revise the cards in a new card file (the running Gate 2 uses batch1). The
-plan's order is wording, then `enforce`, then drop. `handover_spot` and `wants_supplies` cannot be
-fixed by wording.
+**Diagnosis with `persona_check why`:** most behaviour failures were the checks, not the partner.
+- **`waits_for_commit`:** judged the partner's first choice after any new order, including
+  carrying on with its own order. Examples: taking its carrot slices off its board for the soup
+  it was making, or adding chickpea to complete a stew batch it had decided on 16 steps before
+  the order opened.
+- **`split_dish`:** judged everything the partner did while the dish had prep work. Most
+  "violations" were work on other orders, and starts of batches that were not a valid recipe.
+  The top patterns contain no case of the partner starting or plating the split dish itself.
+- **`serves(self)`:** judged the partner's choices while food was only cooking. A reminder was
+  shown at the deciding step in only 3 of 32 cases, so there was almost never ready food.
+- **`handover_spot`:** confirmed. The partner's stated goal says "put it on a right/left/center
+  counter", and the executor puts it on the nearest one.
+
+**Checks fixed (2026-11-17)** to judge only the decisions the rule texts cover (`docs/coop-setting.md`,
+predicate table):
+- `waits_for_commit`: only when the partner was free at the new order. Its reminder and the
+  twin's waiting follow the same condition.
+- `split_dish`: only the starting and plating of the dish; its reminder only fires when such
+  a step is possible.
+- `serves(self)`: only while finished food waits.
+
+**New tool:** `persona_check rescore` re-judges saved episodes by replaying their actions
+(check: replaying with the old checks reproduces all 132 mock episodes' judgments exactly).
+
+**Effect on the twin:**
+- Radius 2: cards 92–95% (the known `order_priority` view gap); full view 95–100% over 8 seeds.
+- It now waits only when free, so it scores higher.
+- Twin Gate 2 conclusion is unchanged: aligned − generic score −13 ± 6 / −9 ± 4, aligned −
+  uninformed −10 ± 6 / −7 ± 4 (`outputs/gate2_twin_v2.json`).
+
+Runs started before this change (all gate folders) play with the old reminders and must not be
+resumed on the new code.
+
+Next: re-score `gate1_llm` and read the remaining failures, then revise the cards in a new card
+file (the running Gate 2 uses batch1). The plan's order is wording, then `enforce`, then drop.
+`handover_spot` and `wants_supplies` cannot be fixed by wording.
 
 ### 3.15 Score is the primary outcome; with the twin, the cards have no score headroom (2026-11-17)
 **Decision (user, 2026-11-17):** score is the primary outcome, alignment secondary (plan §15).

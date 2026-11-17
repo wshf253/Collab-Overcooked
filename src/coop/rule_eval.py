@@ -260,7 +260,7 @@ class Tracker:
         self._first_load_t: Dict[str, int] = {}
         for d in open_orders(state, self.n_open):
             self.new_orders.append({"t": 0, "dish": d, "ego_empty": True, "ego_done": False,
-                                    "partner_done": False})
+                                    "partner_done": False, "partner_free": True})
         self.started = True
 
     def observe(self, t: int, pre, post) -> List[Event]:
@@ -329,9 +329,14 @@ class Tracker:
                     fresh.remove(d)
             ego = self.index.get("ego")
             empty = ego is None or post.players[ego].held_object is None
+            # waits_for_commit is about choosing new work: the partner was free if it held
+            # nothing and had no open order of its own (not in the middle of something)
+            par = self.index.get("partner")
+            free = par is None or (post.players[par].held_object is None
+                                   and self.order_of.get("partner") not in after)
             for d in fresh:
                 self.new_orders.append({"t": t, "dish": d, "ego_empty": empty, "ego_done": False,
-                                        "partner_done": False})
+                                        "partner_done": False, "partner_free": free})
         self.new_orders = [o for o in self.new_orders if t - o["t"] <= 60]
         self.takeovers = [x for x in self.takeovers if t - x["t"] <= TAKEOVER_WINDOW]
 
@@ -501,19 +506,24 @@ class SoloDish(Check):
 
 
 class SplitDish(Check):
+    """Each finishing step of the dish (starting its final utensil, plating; delivery is not
+    judged separately). partner: adherent if the ego did it, or the partner only after the
+    fallback wait. What the partner works on otherwise is order choice, not this rule."""
+
     def judge(self, ctx):
         d = self.p["dish"]
         out = []
         for ev in ctx.events:
             if finishing(ev, d):
                 out.append(self.J(ctx, "ego", ev.who == "ego", f"{ev.verb} {d} by {ev.who}"))
-                if ev.who == "partner" and ev.verb != "deliver":
+                if ev.verb == "deliver":
+                    continue
+                if ev.who == "ego":
+                    out.append(self.J(ctx, "partner", True, f"{ev.verb} {d} left to the partner"))
+                else:
                     since = ctx.tr.complete_since if ev.verb == "start" else ctx.tr.ready_since
                     waited = ctx.tr.waited(since, ev.utensil, ctx.t) if ev.utensil else 0
                     out.append(self.J(ctx, "partner", waited >= FALLBACK_WAIT, f"{ev.verb} {d} after {waited}"))
-            elif (ev.who == "partner" and ev.choice and ev.verb in ("pickup", "start") and ev.item != "dish"
-                  and d in ctx.open and ctx.has_job("partner", lambda j, ds: d in ds and not job_finishing(j, ds, d))):
-                out.append(self.J(ctx, "partner", ev.on(d), f"{ev.verb} {ev.item}"))
         return out
 
     def opportunity(self, view, tracker, me, target=None):
@@ -523,9 +533,7 @@ class SplitDish(Check):
                            for u in k.utensils) or any(
             k.utensil_status(view, u)[0] == "loaded"
             and tracker.info.product_of(k.kind_of[u], k.utensil_status(view, u)[2]) == d for u in k.utensils)
-        choosing = view.players[me].held_object is None and d in open_orders(view, tracker.n_open) \
-            and tracker.order_of.get("partner") != d
-        return self.reminder(k) if finish_ready or choosing else None
+        return self.reminder(k) if finish_ready else None
 
 
 class OrderPriority(Check):
@@ -611,12 +619,22 @@ class Serves(Check):
             if ev.who == "partner" and ev.choice and ev.verb in ("pickup", "start") and \
                     ctx.has_job("partner", lambda j, ds: j.stage == "serve"):
                 if who == "self":
-                    out.append(self.J(ctx, "partner", serve_stage(ev, ctx.info), f"{ev.verb} {ev.item}"))
+                    # "you always plate and deliver": judged while food is ready, not while it cooks
+                    if self._ready(ctx):
+                        out.append(self.J(ctx, "partner", serve_stage(ev, ctx.info), f"{ev.verb} {ev.item}"))
                 else:
                     late = any(ctx.t - s >= FALLBACK_WAIT for s in ctx.tr.ready_since.values())
                     out.append(self.J(ctx, "partner", (not serve_stage(ev, ctx.info)) or late,
                                       f"{ev.verb} {ev.item}"))
         return out
+
+    def _ready(self, ctx) -> bool:
+        split = {r.p["dish"] for r in ctx.rules if r.id == "split_dish"}
+        for u in ctx.k.utensils:
+            status, product, _, _ = ctx.k.utensil_status(ctx.pre, u)
+            if status == "finished" and product in ctx.info.menu and product not in split:
+                return True
+        return False
 
     def opportunity(self, view, tracker, me, target=None):
         k = tracker.k
@@ -826,6 +844,8 @@ class WaitsForCommit(Check):
                                           f"committed {ev.t - o['t']} steps after {o['dish']} opened"))
                 elif ev.who == "partner" and not o["partner_done"]:
                     o["partner_done"] = True
+                    if not o.get("partner_free", True):
+                        continue        # busy when the order came in: carrying on is not covered
                     ego_first = o.get("ego_t") is not None and o["ego_t"] <= ev.t
                     out.append(self.J(ctx, "partner", ev.t - o["t"] >= COMMIT_WAIT or ego_first,
                                       f"started {ev.t - o['t']} steps after {o['dish']} opened"))
@@ -833,8 +853,10 @@ class WaitsForCommit(Check):
 
     def opportunity(self, view, tracker, me, target=None):
         t = getattr(view, "timestep", tracker.t + 1)
+        if view.players[me].held_object is not None:
+            return None
         for o in tracker.new_orders:
-            if 0 <= t - o["t"] < COMMIT_WAIT and o.get("ego_t") is None:
+            if 0 <= t - o["t"] < COMMIT_WAIT and o.get("ego_t") is None and o.get("partner_free", True):
                 return self.reminder(tracker.k)
         return None
 
