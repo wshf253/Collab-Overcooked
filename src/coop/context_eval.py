@@ -193,4 +193,27 @@ class ContextRules(Check):
 
     # -- reminders (LLM partner, plan v3 W4) --------------------------------------
     def opportunity(self, view, tracker, me, target=None):
+        """The reminder of the first rule (card order) whose context holds in the partner's
+        own view now. ``tracker.ctx_now``: the features kept by the partner every step (so
+        "prepared items waiting" counts waiting time). Nothing in the default context: the
+        habit is in the system prompt."""
+        f = getattr(tracker, "ctx_now", None)
+        if f is None:
+            return None
+        dishes = open_dishes(view, tracker.n_open)
+        need = {self.k.recipes[x][0] for d in dishes for x in tree(self.k, d) if x in self.k.recipes}
+        U = [d for _, d in f["urgent"]]
+        B = [k for k in f["blocked"] if k in need]
+        P = list(f["prep_ready"])
+        for r in self.rules:
+            extra = None
+            if r.id == "on_urgent" and U:
+                extra = {"dish": U[0]}
+            elif r.id == "on_blocked" and B:
+                extra = {"kind": B[0].replace("_", " ")}
+            elif r.id == "on_prep_ready" and P:
+                extra = {"dish": P[0]}
+            if extra is not None:
+                self.label = r.label()
+                return render(r, "reminder", self.lib, self.k, extra)
         return None

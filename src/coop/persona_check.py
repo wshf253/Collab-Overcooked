@@ -432,6 +432,51 @@ def use_rescored(eps: List[Dict[str, Any]]) -> int:
     return n
 
 
+def gate0_folder(out: Path, calibrate: List[int], judge: List[int], guard_factor: float = 2.0) -> Dict[str, Any]:
+    """Plan v3 Gate 0 / Gate 2 from a runner folder: conditions are scripted egos (proactive,
+    mismatched, the rest reactive), personas are context cards. Per card: crossover table on
+    the judge seeds, the best reactive ego chosen on the calibration seeds, proactive - best
+    reactive and proactive - mismatched paired over (seed, episode)."""
+    from .voi import paired_ci
+    eps = load_episodes(out)
+    val: Dict[Tuple[str, str, int, int], Dict[str, float]] = {}
+    for e in eps:
+        sm = e["summary"]
+        guards = sm.get("partner_guards", (sm.get("partner_llm") or {}).get("guards")) or 0
+        val[(e["persona"], e["condition"], e["seed"], e["episode"])] = {
+            "score": sm["score"], "completed": sm.get("orders_completed", 0),
+            "expired": sm.get("orders_expired", 0), "guards": guards}
+    cards = sorted({k[0] for k in val})
+    egos = sorted({k[1] for k in val}, key=lambda c: (c != "proactive", c != "mismatched", c))
+    reactive = [c for c in egos if c not in ("proactive", "mismatched")]
+    keys = lambda c, e, seeds: sorted(k for k in val if k[0] == c and k[1] == e and k[2] in seeds)
+    mean = lambda c, e, seeds, m: statistics.fmean(val[k][m] for k in keys(c, e, seeds)) if keys(c, e, seeds) else float("nan")
+    res: Dict[str, Any] = {"layout": str(out), "menu": "-", "view_radius": "-", "deadlines": "see config.json",
+                           "cards": cards, "egos": egos, "calibrate": calibrate, "judge": judge, "table": {},
+                           "cards_result": {}}
+    for c in cards:
+        for e in egos:
+            res["table"][f"{c}|{e}"] = {m: mean(c, e, judge, m) for m in ("score", "completed", "expired", "guards")}
+        best = max(reactive, key=lambda e: mean(c, e, calibrate, "score"))
+
+        def diff(other):
+            out_ = []
+            for k in keys(c, "proactive", judge):
+                k2 = (c, other, k[2], k[3])
+                if k2 in val:
+                    out_.append(val[k]["score"] - val[k2]["score"])
+            return paired_ci(out_)
+        guards = mean(c, "proactive", judge, "guards")
+        bar = max(0.5, guard_factor * mean(c, "proactive", calibrate, "guards"))
+        d_best = diff(best)
+        res["cards_result"][c] = {"best_reactive": best, "proactive_minus_best_reactive": d_best,
+                                  "proactive_minus_mismatched": diff("mismatched"), "guard_bar": bar,
+                                  "proactive_guards": guards,
+                                  "pass": bool(d_best["lo"] is not None and d_best["lo"] > 0 and guards <= bar)}
+    res["pass"] = all(r["pass"] for r in res["cards_result"].values())
+    return res
+
+
 _NUM = re.compile(r"(?<![A-Za-z_])-?\d+")
 
 
@@ -528,6 +573,11 @@ def main(argv=None):
     w.add_argument("--rule", help="only rules whose label contains this text")
     w.add_argument("--examples", type=int, default=3)
     w.add_argument("--out", type=Path)
+    g0 = sub.add_parser("gate0", help="plan v3 Gate 0 / Gate 2 from a runner folder (scripted egos x context cards)")
+    g0.add_argument("run_dir", type=Path)
+    g0.add_argument("--calibrate", nargs="+", type=int, default=[0, 1, 2, 3])
+    g0.add_argument("--judge", nargs="+", type=int, default=[4, 5, 6, 7])
+    g0.add_argument("--out", type=Path)
     rs = sub.add_parser("rescore", help="re-judge saved episodes with the current rule checks (replay)")
     rs.add_argument("run_dir", type=Path)
     rs.add_argument("--workers", type=int, default=1)
@@ -536,7 +586,11 @@ def main(argv=None):
         sp.add_argument("--rescored", action="store_true",
                         help="use the files written by 'rescore' (the current rule checks)")
     args = ap.parse_args(argv)
-    if args.cmd == "rescore":
+    if args.cmd == "gate0":
+        from .voi import format_gate0
+        rep = gate0_folder(args.run_dir, args.calibrate, args.judge)
+        print(format_gate0(rep))
+    elif args.cmd == "rescore":
         rep = rescore(args.run_dir, args.workers)
         print(f"{rep['rescored']} of {rep['episodes']} episodes re-scored in {rep['folder']}")
         for ep, err in rep["failed"]:

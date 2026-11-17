@@ -56,14 +56,19 @@ def make_controlled_sequence(menu: Menu, seed: int, length: int, copies: int = 1
     """Controlled order list: blocks that contain every menu dish ``copies`` times, each
     block shuffled with a private RNG seeded by ``seed``, repeated to ``length``. Every
     dish appears equally often, so a dish-tied rule is observable on a known schedule
-    (docs/PERSONA_PARTNER_PLAN_v2.md, section 6). Weights are ignored."""
+    (docs/PERSONA_PARTNER_PLAN_v2.md, section 6). Unequal weights set copies per block
+    (relative to the smallest weight, rounded): {a: 3, b: 1} puts a three times in each block.
+    Equal weights (a list) give every dish ``copies`` times, as before."""
     if length < 1 or copies < 1:
         raise ValueError("length and copies must be >= 1")
-    names = sorted(normalize_menu(menu))
+    weights = normalize_menu(menu)
+    names = sorted(weights)
+    low = min(weights.values())
+    per = {n: copies * max(1, int(round(weights[n] / low))) for n in names}
     rng = random.Random(seed)
     seq: List[str] = []
     while len(seq) < length:
-        block = [n for n in names for _ in range(copies)]
+        block = [n for n in names for _ in range(per[n])]
         rng.shuffle(block)
         seq.extend(block)
     return seq[:length]

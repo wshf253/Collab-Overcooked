@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 
 from .llm_agent import LLMAgent
 from .rule_eval import Tracker, is_takeover, make_checks, parse_events, takeover_overridden
-from .rules import Card, render
+from .rules import CONTEXT_RULE_IDS, Card, render
 
 PRIORITY = ("How you decide, in this order: (1) choose a valid action and never block the kitchen; "
             "(2) finish what you are carrying or have started; (3) follow your habits above, in the "
@@ -90,6 +90,11 @@ class LLMPartner(LLMAgent):
         self.checks = None
         self._prev_view = None
         self.order_dish: Optional[str] = None
+        # plan v3: context features every step, and the global deadlock guard
+        self.ctx_tracker = None
+        self.last_progress = 0
+        self.guard_active = False
+        self.guards: List[Dict[str, Any]] = []
 
     # -- prompts ---------------------------------------------------------------
     def _reply_template(self) -> str:
@@ -115,9 +120,27 @@ class LLMPartner(LLMAgent):
                      "next decision: keep it or change it.")
         return parts
 
+    GUARD_STEPS = 30
+
+    def act(self, state, t):
+        # Deadlock guard (plan v3, 4): a runner mechanism on the true state, not a habit. If
+        # neither cook has completed an interaction for GUARD_STEPS steps while an order is
+        # open, the partner is told once to do the next needed step whatever its habits say.
+        if any(state.ml_actions or []):
+            self.last_progress, self.guard_active = t, False
+        if any(r.id in CONTEXT_RULE_IDS for r in self.rules) and not self.guard_active and state.order_list \
+                and t - self.last_progress >= self.GUARD_STEPS:
+            self.guard_active, self.last_progress = True, t
+            self.guards.append({"t": t})
+            self.goal_events.append({"t": t, "type": "guard"})
+        return super().act(state, t)
+
     def _observation(self, state, t) -> str:
         text = super()._observation(state, t)
         extra = []
+        if self.guard_active:
+            extra.append("Nothing has been done in the kitchen for a long time: do the next needed step now, "
+                         "whatever your usual way of working is.")
         if self.intention is not None:
             it = self.intention
             extra.append(f"Your current goal (set at t={it['t']}): {it['goal'] or '-'}; order: {it['order'] or '-'}; "
@@ -138,6 +161,13 @@ class LLMPartner(LLMAgent):
                               self.context.get("open_orders", 1))
             self.rt.start(state)
             self.checks = make_checks(self.rules, self.library, k)
+            if any(r.id in CONTEXT_RULE_IDS for r in self.rules):
+                from .context import ContextTracker
+                self.ctx_tracker = ContextTracker(k, self.context.get("open_orders", 1),
+                                                  getattr(self.mdp, "urgent_steps", None) or 10)
+        if self.ctx_tracker is not None:
+            self.ctx_tracker.observe(state, t)
+            self.rt.ctx_now = self.ctx_tracker.now
         prev = self._prev_view
         if prev is not None and t > 0:
             for ev in parse_events(t - 1, prev, state, self.rt.info, self.rt.roles):
@@ -193,7 +223,8 @@ class LLMPartner(LLMAgent):
         return {"name": self.card.name, "type": "llm", "rules": [r.label() for r in self.rules],
                 "decisions": len(self.decisions), "invalid_actions": self.invalid, "fallbacks": self.fallbacks,
                 "usage": self.usage.as_dict(), "stages": stages, "reminders": reminders,
-                "goal_changes": len(self.goal_events)}
+                "goal_changes": len(self.goal_events),
+                **({"guards": len(self.guards)} if any(r.id in CONTEXT_RULE_IDS for r in self.rules) else {})}
 
 
 class LLMPartnerPlayer:

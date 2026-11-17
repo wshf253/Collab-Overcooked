@@ -241,6 +241,25 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.21 Plan v3 LLM experiments built (W4, Gates 1–3, learning pilot), 2026-11-17
+**User's decision:** go on to the LLM experiments despite Gate 0. Scripted egos re-plan every
+step, so they never commit before observing. The LLM ego decides in macro actions.
+
+**Built:**
+- the LLM partner on the context cards (reminders, the deadlock guard as a one-off prompt line);
+- the twin and `context_ego` egos in the runner, and `oracle: other`;
+- the configs `persona_gate1(_twin)_ctx`, `persona_gate2_ctx`, `persona_value_ctx` (Gate 3)
+  and `days_ctx` (regimes, held-back dishes, 9 conditions including `generic_memory`);
+- the context probe questions, `persona_check gate0` for runner folders, and expired / guard /
+  transfer tables in `coop.learning`.
+
+**Checks:** old configs are identical (mock); every new config runs with mock backends.
+
+**Deviations from the plan:**
+- Gates 1–3 and the pilot can run without Gate 0 passing (user).
+- The guard for the LLM partner is a prompt line, not a scripted step.
+- The reference times are those of the 5-dish menu for all ctx configs.
+
 ### 3.20 Plan v3 W1–W3: timers, context rules, Gate 0 fails (2026-11-17)
 **Design reference:** `docs/CONTEXT_PARTNER_PLAN_v3.md` (replaces v2's personas, gates and
 pilot).
@@ -785,7 +804,7 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
    and the value check with the LLM ego on that kitchen (`persona_gate1_ing2.yaml`,
    `persona_value_ing2.yaml`), then the pilot with `days_persona_ing2.yaml`.
    **Superseded by plan v3** (`docs/CONTEXT_PARTNER_PLAN_v3.md`): W1–W3 are done and Gate 0 fails
-   (§3.20). Stopped for a decision (plan §11). W0 (`persona_value_ing2.yaml`) can run in the background.
+   (§3.20). Next (user): the LLM experiments, built in §3.21: Gates 1–3, then the learning pilot.
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated

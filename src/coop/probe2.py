@@ -57,7 +57,39 @@ def questions(kitchen, menu: List[str]) -> List[Dict[str, Any]]:
     return qs
 
 
+UNCLEAR = "no clear pattern"
+# Plan v3 (section 8): one conditional question per context rule, dish-agnostic.
+CONTEXT_QUESTIONS = [
+    {"id": "default_work", "rule": "default_work",
+     "text": "When nothing special is going on, how does your partner work?",
+     "options": {"prep": "it prepares ingredients (fetches, cuts, blends) and leaves cooking and serving to me",
+                 "whole": "it takes one order and does it from start to finish by itself"}},
+    {"id": "on_urgent", "rule": "on_urgent",
+     "text": "When an order is about to expire (its timer is low), what does your partner do?",
+     "options": {"takes": "it drops what it is doing and finishes the urgent order",
+                 "keeps": "it carries on with its own work"}},
+    {"id": "on_blocked", "rule": "on_blocked",
+     "text": "When every utensil of a kind is busy (running or holding finished food), what does your partner do?",
+     "options": {"clears": "it takes the finished food out to free a utensil",
+                 "waits": "it does other work and leaves the utensils full"}},
+    {"id": "on_prep_ready", "rule": "on_prep_ready",
+     "text": "When prepared items (cut or blended) are waiting for an order, what does your partner do?",
+     "options": {"switches": "it switches to cooking and serving them",
+                 "continues": "it keeps preparing and leaves cooking them to me"}},
+]
+
+
+def context_questions() -> List[Dict[str, Any]]:
+    return [{"id": q["id"], "rule": q["rule"], "text": q["text"], "options": list(q["options"].values()) + [UNCLEAR],
+             "modes": q["options"]} for q in CONTEXT_QUESTIONS]
+
+
 def truth(q: Dict[str, Any], rules: List[Rule]) -> Dict[str, Any]:
+    if "modes" in q:                  # a context question: the card's mode, else no clear pattern
+        r = next((r for r in rules if r.id == q["rule"]), None)
+        if r is None:
+            return {"answer": UNCLEAR, "has": False, "rule": None}
+        return {"answer": q["modes"][r.p["mode"]], "has": True, "rule": r.label()}
     """The correct option and whether the persona has the rule behind the question."""
     rid = q["rule"]
     for r in rules:
@@ -105,7 +137,11 @@ def score(qs: List[Dict[str, Any]], answers: Dict[str, Any], rules: List[Rule],
 def run(agent, cfg, rules: List[Rule], exposure: Dict[str, int]) -> Dict[str, Any]:
     """Ask the ego (frozen memory) and score the answers."""
     from .orders import normalize_menu
-    qs = questions(agent.kitchen, list(normalize_menu(cfg.menu)))
+    from .rules import CONTEXT_RULE_IDS
+    if any(r.id in CONTEXT_RULE_IDS for r in rules):
+        qs = context_questions()
+    else:
+        qs = questions(agent.kitchen, list(normalize_menu(cfg.menu)))
     res = agent.knowledge_probe(qs)
     out = score(qs, res.get("answers") or {}, rules, exposure)
     out.update(questions=qs, prompt=res.get("prompt"), reply=res.get("reply"), error=res.get("error"),

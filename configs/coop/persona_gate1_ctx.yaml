@@ -1,0 +1,45 @@
+# Plan v3 Gate 1 (docs/CONTEXT_PARTNER_PLAN_v3.md, 7): is the LLM partner usable on the context
+# cards? Scripted steady ego; cards A, B and the neutral partner; order timers.
+# Analyse: python -m coop.persona_check gate1 outputs/gate1_ctx --twin outputs/gate1_twin_ctx
+#          python -m coop.persona_check why outputs/gate1_ctx
+# Check also that the partner adds no fallbacks of its own (e.g. a "keeps" partner taking the
+# urgent order): that shows as non-adherence of on_urgent(keeps).
+name: persona_gate1_ctx
+menu: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]
+layout: open_ing2_env
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+order_lists: controlled
+deadlines:
+  slack: 1.5
+  urgent_steps: 15
+  expiry_penalty: 20
+  # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
+  reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
+ego_index: 0
+days: 1
+episodes_per_day: 3
+personas: [A, B, neutral]
+run_seeds: [0, 1, 2, 3]
+agent: {type: scripted, persona: steady}
+conditions:
+  steady_ego: {}
+reference_agent: null
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ctx.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120

@@ -1,0 +1,62 @@
+# Plan v3 Gate 3 (7): is knowing the partner worth points to the LLM ego? Same episodes for:
+#   tom_struct          no knowledge (structured ToM within the episode)
+#   oracle              the card's wants lines up front
+#   oracle_mismatched   the OTHER card's wants lines (does the ego rely on the content?)
+# LLM partner on cards A and B, order timers. Score is the primary outcome.
+# Analyse: python -m coop.learning outputs/value_ctx   (interaction-episode score minus tom_struct)
+name: persona_value_ctx
+menu: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]
+layout: open_ing2_env
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+order_lists: controlled
+deadlines:
+  slack: 1.5
+  urgent_steps: 15
+  expiry_penalty: 20
+  # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
+  reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
+ego_index: 0
+days: 1
+episodes_per_day: 4
+personas: [A, B]
+run_seeds: [0, 1, 2, 3, 4, 5, 6, 7]
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ctx.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: false
+  tom: true
+  tom_mode: structured
+  max_tokens: 400
+  model_max_tokens: 1000
+conditions:
+  tom_struct: {memory: false}
+  oracle: {memory: false, oracle: true}
+  oracle_mismatched: {memory: false, oracle: other}
+reference_agent: {type: scripted, persona: steady}

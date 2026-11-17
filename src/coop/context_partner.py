@@ -293,3 +293,46 @@ class ContextPlayer(RulePlayer):
         out = super().summary()
         out.update(policy=self.policy, k=self.k, guards=len(self.guards))
         return out
+
+
+# ---------------------------------------------------------------------- #
+# Runner agent: scripted context egos (Gate 2 with the LLM partner, plan v3 7)
+# ---------------------------------------------------------------------- #
+from .agents import Agent, register_agent  # noqa: E402
+
+
+class ContextEgoAgent(Agent):
+    """A scripted context ego in the runner. ``policy``: proactive (``align: own`` = this
+    partner's card, ``other`` = mismatched), always_take_urgent, never_take_urgent,
+    wait_and_see (``k``)."""
+    name = "context_ego"
+
+    def __init__(self, rules: List[Dict[str, Any]], menu: List[str], policy: str = "proactive", k: int = 0,
+                 card: str = "", align: str = "own"):
+        from .rules import load_library, parse_rule
+        lib = load_library()
+        self.rules = [parse_rule(r, lib) for r in rules] if policy == "proactive" else []
+        self.menu, self.policy, self.k, self.card, self.align = list(menu), policy, int(k), card, align
+        self.memory: Dict[str, Any] = {}
+
+    def begin_episode(self, mdp, index, context):
+        self.player = ContextPlayer(self.rules, self.menu, "ego", self.policy, k=self.k, name=f"context_ego:{self.policy}")
+        self.player.reset(mdp, index, context["episode_seed"], view_radius=context.get("view_radius"))
+
+    def act(self, state, t):
+        return self.player.act(state, t)
+
+    @property
+    def job(self):
+        return self.player.job
+
+    @property
+    def job_t(self):
+        return self.player.job_t
+
+    def episode_log(self):
+        return {"summary": self.player.summary(), "card": self.card, "align": self.align, "policy": self.policy,
+                "decisions": self.player.decision_log}
+
+
+register_agent("context_ego", ContextEgoAgent)

@@ -66,10 +66,11 @@ from .partner import PERSONAS, SimulatedHuman, Traits
 from .kitchen import Kitchen
 from .profile import MODEL_SECTIONS, avoid_options, score_profile, truth_profile
 from . import rule_partner  # noqa: F401  (registers the "rule_ego" agent type)
+from . import context_partner  # noqa: F401  (registers the "context_ego" agent type)
 from .llm_partner import LLMPartner, LLMPartnerPlayer
 from .rule_eval import RuleEvaluator, decided_at, intent_target
 from .rule_partner import RulePlayer
-from .rules import NEUTRAL, load_cards, load_library, render
+from .rules import CONTEXT_RULE_IDS, NEUTRAL, load_cards, load_library, render
 from . import feedback as day_feedback_mod
 from . import probe2
 
@@ -77,7 +78,8 @@ REFERENCE = "_reference"
 CONFIG_KEYS = {
     "name", "layout", "menu", "horizon", "wrong_delivery_penalty", "no_repeat", "days",
     "episodes_per_day", "ego_index", "personas", "custom_personas", "run_seeds", "agent",
-    "conditions", "reference_agent", "open_orders", "view_radius", "partner", "deadlines",
+    "conditions", "reference_agent", "open_orders", "view_radius", "partner", "deadlines", "regimes",
+    "regime_order",
     "schedule", "order_lists", "eval_episodes", "knowledge_probe",
 }
 # Condition keys the runner handles (not passed to the agent).
@@ -104,6 +106,11 @@ class DaysConfig:
     # Order timers with expiry (plan v3, 3.1): {slack, reference: {dish: steps}, expiry_penalty,
     # urgent_steps}; None (default) = no timers, the original behaviour.
     deadlines: Optional[Dict[str, Any]] = None
+    # Day regimes (plan v3, 8): {name: {slack: s, dishes: [...] or {dish: weight}}} for the
+    # interaction episodes, and regime_order {even: [one name per day], odd: [...]} by run seed
+    # parity (counterbalancing). Held-out episodes keep the base deadlines and the full menu.
+    regimes: Optional[Dict[str, Dict[str, Any]]] = None
+    regime_order: Optional[Dict[str, List[str]]] = None
     personas: List[str] = field(default_factory=lambda: ["steady"])
     custom_personas: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     run_seeds: List[int] = field(default_factory=lambda: [0])
@@ -251,6 +258,12 @@ class DaysConfig:
             return {}
         return {k: v for k, v in (self.conditions.get(name) or {}).items() if k in RUNNER_KEYS}
 
+    def regime_for(self, run_seed: int, day: int) -> Optional[str]:
+        if not self.regimes or not self.regime_order:
+            return None
+        order = self.regime_order["even" if run_seed % 2 == 0 else "odd"]
+        return order[min(day, len(order)) - 1]
+
     def menu_for(self, day: int) -> List[str]:
         """Dishes of a day's interaction episodes (schedule), else the whole menu."""
         full = list(normalize_menu(self.menu))
@@ -336,11 +349,18 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     else:
         seed = episode_seed(run_seed, day, episode)
         menu = cfg.menu_for(day) if cfg.schedule else cfg.menu
+    deadlines, regime = cfg.deadlines, None
+    if kind == "interaction" and cfg.regime_for(run_seed, day):
+        regime = cfg.regime_for(run_seed, day)
+        reg = cfg.regimes[regime]
+        menu = reg.get("dishes") or menu
+        if deadlines is not None and "slack" in reg:
+            deadlines = dict(deadlines, slack=reg["slack"])
     ego, other = cfg.ego_index, 1 - cfg.ego_index
     env = ContinuousOrderEnv(menu, layout=cfg.layout, horizon=cfg.horizon,
                              wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat,
                              open_orders=cfg.open_orders, order_mode=cfg.order_lists,
-                             deadlines=cfg.deadlines)
+                             deadlines=deadlines)
     start = env.reset(seed)
     context = {"day": day, "episode": episode, "episode_seed": seed, "layout": cfg.layout,
                "horizon": cfg.horizon, "menu": normalize_menu(menu), "index": ego,
@@ -384,6 +404,8 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
                    ego_index=ego)
     if kind != "interaction":
         summary["kind"] = kind
+    if regime is not None:
+        summary["regime"] = regime
     # The ego learns from what happened in the kitchen, never from the partner's
     # persona, traits or true jobs.
     public = {k: v for k, v in summary.items() if k != "persona"}
@@ -411,7 +433,9 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
         if cfg.partner_type() == "llm":
             summary["partner_llm"] = {k: psummary.get(k) for k in
                                       ("usage", "invalid_actions", "fallbacks", "decisions", "reminders",
-                                       "goal_changes")}
+                                       "goal_changes", "guards") if k != "guards" or k in psummary}
+        if hasattr(partner, "guards"):
+            summary["partner_guards"] = len(partner.guards)
         with open(ep_dir / "rule_events.jsonl", "w") as f:
             for j in evaluator.judgments:
                 f.write(json.dumps(asdict(j)) + "\n")
@@ -441,6 +465,9 @@ def make_partner(cfg: DaysConfig, persona: str, context: Dict[str, Any]):
     k = cfg.partner.get("complexity")
     rules = card.active(k)
     if ptype == "rule":
+        if any(r.id in CONTEXT_RULE_IDS for r in rules):
+            from .context_partner import ContextPlayer
+            return ContextPlayer(rules, list(normalize_menu(cfg.menu)), "partner", "card", name=persona), rules, None
         return RulePlayer(rules, normalize_menu(cfg.menu), "partner", persona), rules, None
     p = cfg.partner
     agent = LLMPartner(p["backend"], card, load_library(), complexity=k, remind=p.get("remind", True),
@@ -461,12 +488,17 @@ def resolve_agent_spec(cfg: DaysConfig, condition: str, persona: str) -> Dict[st
     """The ego spec for one run. A ``rule_ego`` gets the rules of its card: ``align: own``
     (this persona's card), ``other`` (the next persona's card, or ``card: <name>``)."""
     spec = cfg.condition_agent(condition)
-    if cfg.condition_runner(condition).get("oracle"):
+    oracle = cfg.condition_runner(condition).get("oracle")
+    if oracle:
         # The one exception to "the ego never sees the card": what the partner wants from it.
+        # oracle: other (oracle_mismatched, plan v3 Gate 3): the next card's wants lines.
         card = cfg.cards()[persona]
+        if oracle == "other":
+            ps = [p for p in cfg.personas if p != NEUTRAL] or cfg.personas
+            card = cfg.cards()[ps[(ps.index(persona) + 1) % len(ps)] if persona in ps else ps[0]]
         lib = load_library()
         spec["oracle_wants"] = [render(r, "wants", lib, oracle_kitchen(cfg)) for r in card.active(cfg.partner.get("complexity"))]
-    if spec.get("type") != "rule_ego":
+    if spec.get("type") not in ("rule_ego", "context_ego"):
         return spec
     align = spec.get("align", "own")
     cards = cfg.cards()
@@ -480,6 +512,9 @@ def resolve_agent_spec(cfg: DaysConfig, condition: str, persona: str) -> Dict[st
     else:
         raise ValueError(f"rule_ego align must be own or other, got {align!r}")
     rules = cards[name].active(cfg.partner.get("complexity"))
+    if spec.get("type") == "context_ego":
+        return {"type": "context_ego", "rules": [r.to_dict() for r in rules], "menu": list(normalize_menu(cfg.menu)),
+                "card": name, "align": align, "policy": spec.get("policy", "proactive"), "k": spec.get("k", 0)}
     return {"type": "rule_ego", "rules": [r.to_dict() for r in rules], "menu": normalize_menu(cfg.menu),
             "card": name, "align": align}
 

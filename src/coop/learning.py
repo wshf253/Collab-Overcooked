@@ -188,13 +188,33 @@ def exposure_table(data) -> Dict[str, Dict[int, float]]:
     return {r: {d: statistics.fmean(v) for d, v in ds.items()} for r, ds in out.items()}
 
 
+def transfer_table(data) -> Dict[str, Dict[int, Dict[str, Any]]]:
+    """Held-out orders completed (%) for dishes seen in interaction episodes and for dishes
+    never seen there (plan v3, 8: transfer), per condition and day (pooled over runs)."""
+    seen = {o["name"] for v in data["inter"].values() for o in v.get("orders", [])}
+    acc: Dict[str, Dict[int, Dict[str, List[int]]]] = defaultdict(lambda: defaultdict(lambda: {"seen": [0, 0], "unseen": [0, 0]}))
+    for (c, p, s, d, e), v in data["evals"].items():
+        if c == REFERENCE:
+            continue
+        for o in v.get("orders", []):
+            if o.get("completed_t") is None and o.get("expired_t") is None:
+                continue        # still open at the end: not judged
+            g = "seen" if o["name"] in seen else "unseen"
+            acc[c][d][g][0] += o.get("completed_t") is not None
+            acc[c][d][g][1] += 1
+    return {c: {d: {g: (100 * a / n if n else None, n) for g, (a, n) in gs.items()} for d, gs in sorted(ds.items())}
+            for c, ds in acc.items()}
+
+
 def infra(data) -> Dict[str, Dict[str, Optional[float]]]:
     acc: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
     for (c, p, s, d, e), v in list(data["inter"].items()) + list(data["evals"].items()):
         u = v.get("llm_usage") or {}
         pl = v.get("partner_llm") or {}
         for k, x in (("ego_invalid", u.get("invalid_actions")), ("ego_fallbacks", u.get("fallbacks")),
-                     ("partner_invalid", pl.get("invalid_actions")), ("partner_fallbacks", pl.get("fallbacks"))):
+                     ("partner_invalid", pl.get("invalid_actions")), ("partner_fallbacks", pl.get("fallbacks")),
+                     ("orders_expired", v.get("orders_expired")),
+                     ("guards", v.get("partner_guards", pl.get("guards")))):
             if x is not None:
                 acc[c][k].append(x)
     return {c: {k: statistics.fmean(v) for k, v in ks.items()} for c, ks in acc.items()}
@@ -230,6 +250,7 @@ def report(out: Path) -> Dict[str, Any]:
                          "recited_days": r["recited"]} for c, r in fb.items()},
         "trimmed_lines_per_day": {c: statistics.fmean(v) for c, v in trims.items() if v},
         "infra": infra(data),
+        "transfer": transfer_table(data),
     }
 
 
@@ -297,8 +318,13 @@ def format_report(rep: Dict[str, Any]) -> str:
         lines.append("\n== partner file: lines trimmed to the section budgets per day ==")
         for c, v in sorted(rep["trimmed_lines_per_day"].items()):
             lines.append(f"  {c:<14} {v:.1f}")
+    if any(any(g["unseen"][1] for g in ds.values()) for ds in rep.get("transfer", {}).values()):
+        lines.append("\n== transfer: held-out orders completed (%), dishes seen in interaction / never seen (n) ==")
+        pct = lambda x: "-" if x[0] is None else f"{x[0]:.0f}({x[1]})"
+        for c, by_day in sorted(rep["transfer"].items()):
+            lines.append(f"{c:<14}" + "  ".join(f"d{d} {pct(g['seen'])}/{pct(g['unseen'])}" for d, g in by_day.items()))
     if rep["infra"]:
-        lines.append("\n== infrastructure (per episode) ==")
+        lines.append("\n== infrastructure and failures (per episode; orders_expired with timers, guards = deadlock-guard firings) ==")
         for c, r in sorted(rep["infra"].items()):
             lines.append(f"  {c:<14} " + ", ".join(f"{k} {v:.1f}" for k, v in sorted(r.items())))
     return "\n".join(lines)

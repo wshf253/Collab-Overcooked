@@ -1,0 +1,50 @@
+# Plan v3 Gate 2 (7): Gate 0 with the LLM partner. Scripted egos: proactive (acts on the card's
+# wants), mismatched (the other card's), and the reactive ones; the best reactive is chosen on
+# calibration seeds 0-3 and judged on 4-7.
+# Analyse: python -m coop.persona_check gate0 outputs/gate2_ctx --calibrate 0 1 2 3 --judge 4 5 6 7
+name: persona_gate2_ctx
+menu: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]
+layout: open_ing2_env
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+order_lists: controlled
+deadlines:
+  slack: 1.5
+  urgent_steps: 15
+  expiry_penalty: 20
+  # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
+  reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
+ego_index: 0
+days: 1
+episodes_per_day: 3
+personas: [A, B]
+run_seeds: [0, 1, 2, 3, 4, 5, 6, 7]
+agent: {type: scripted, persona: steady}
+conditions:
+  proactive: {type: context_ego, policy: proactive, align: own}
+  mismatched: {type: context_ego, policy: proactive, align: other}
+  steady: {}
+  always_take_urgent: {type: context_ego, policy: always_take_urgent}
+  never_take_urgent: {type: context_ego, policy: never_take_urgent}
+  wait_and_see_3: {type: context_ego, policy: wait_and_see, k: 3}
+  wait_and_see_6: {type: context_ego, policy: wait_and_see, k: 6}
+  wait_and_see_10: {type: context_ego, policy: wait_and_see, k: 10}
+reference_agent: null
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ctx.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120

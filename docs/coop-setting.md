@@ -966,6 +966,49 @@ expired orders, guard firings) on the judge seeds. Then, per card:
 python -m coop.voi --gate0 configs/coop/personas/batch_ctx.yaml --layout open_ing2_env --menu boiled_potato_slices baked_carrot_soup sliced_carrot_and_potato_stew --open-orders 2 --view-radius 2 --slack 1.5 --urgent-steps 15 --reference '{"boiled_potato_slices": 54, "baked_carrot_soup": 64, "sliced_carrot_and_potato_stew": 65}' --seeds 0 1 2 3 4 5 6 7 --eval-seeds 8 9 10 11 12 13 14 15 --workers 8 --out outputs/gate0_base.json
 ```
 
+## Plan v3: LLM experiments with context partners
+
+**LLM partner on context cards** (W4):
+- **Prompt:** the card's context rules in card order, with no fallbacks; it sees the order
+  timers.
+- **Reminders:** one line per decision, for the first rule (card order) whose context holds in
+  its own view. It keeps the context features every step, so "prepared items waiting" counts
+  waiting time.
+- **Deadlock guard:** after 30 steps without a completed interaction, one prompt line tells it
+  to do the next needed step. It is logged as `guard` and is not part of the persona prompt.
+
+**Runner additions:**
+- With `partner.type: rule`, a context card is played by the twin (`ContextPlayer`).
+- Ego `type: context_ego` (`policy: proactive | always_take_urgent | never_take_urgent |
+  wait_and_see`, `k`, `align: own | other`) gives the scripted egos for Gate 2.
+- Condition `oracle: other` is `oracle_mismatched`: the next card's wants lines.
+- Config `regimes` / `regime_order` set per-day timer slack and order mix for interaction
+  episodes, counterbalanced by run-seed parity. Held-out episodes keep the base timers and the
+  full menu.
+- Controlled order lists honour integer weights (copies per block).
+
+**Analysis:**
+- `persona_check gate0 OUT` reads a runner folder (Gate 2): the crossover table, the best
+  reactive ego, proactive − best reactive and − mismatched.
+- `coop.learning` adds expired orders and guard firings per episode, and the transfer table:
+  held-out orders completed for dishes seen in interaction vs never seen.
+- The knowledge probe asks one conditional question per context rule (`probe2.CONTEXT_QUESTIONS`).
+
+| config | step | players | size |
+|---|---|---|---|
+| `persona_gate1_twin_ctx.yaml` | Gate 1, twin | scripted | CPU |
+| `persona_gate1_ctx.yaml` | Gate 1 | LLM partner, steady ego | A, B, neutral × 4 seeds × 3 episodes |
+| `persona_gate2_ctx.yaml` | Gate 2 | LLM partner, 8 scripted egos | 2 cards × 8 seeds × 3 episodes |
+| `persona_value_ctx.yaml` | Gate 3 | LLM partner, LLM ego (`tom_struct`, `oracle`, `oracle_mismatched`) | 2 cards × 8 seeds × 4 episodes |
+| `days_ctx.yaml` | learning pilot / main | LLM partner, LLM ego, 9 conditions | 2 cards × 4 seeds × 5 days |
+
+`days_ctx.yaml`:
+- **Menu:** interaction episodes use the 3 pilot dishes. The held-out set adds
+  `baked_potato_soup` and `boiled_carrot_slices`, never seen in interaction (transfer).
+- **Regimes:** urgency-heavy days (slack 1.0), blocking-heavy days (oven-heavy orders, slack
+  2.0), and a mixed day 5.
+- **Order:** even seeds see urgency first, odd seeds blocking first.
+
 **Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
 the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day
 of 4 full-menu episodes, 4 cards × 8 seeds, batch2, LLM partner. Read the "interaction-episode
