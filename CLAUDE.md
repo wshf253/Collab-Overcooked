@@ -2,9 +2,11 @@
 
 - Research context and current results: read `RESEARCH_STATUS.md` first, and update it when
   results or the setting change. Usage and commands: `docs/coop-setting.md`.
-- The design reference is `docs/PERSONA_PARTNER_PLAN_v2.md` (LLM persona partner, gates,
-  multi-day learning). Its dates and stop points are not binding (the user said so on 2026-11-17);
-  use its design as the default and say where we deviate.
+- The design reference is `docs/CONTEXT_PARTNER_PLAN_v3.md` (context-dependent partners,
+  proactive collaboration, order timers, Gate 0). It builds on `docs/PERSONA_PARTNER_PLAN_v2.md`
+  and replaces v2's persona design, gates and pilot; where they disagree, v3 holds. v2's dates
+  are not binding; v3's "report, then stop" points (after Gate 0 and after Gate 3) are. Say where
+  we deviate.
 - The research code is `src/coop/` (tests in `tests/test_coop_*.py`). The original benchmark
   (`src/main.py`, `evaluation.py`) and the env defaults must keep their original behaviour.
 - Environment: Python 3.11 with `requirements-coop.txt` (`numpy<2`); run with
