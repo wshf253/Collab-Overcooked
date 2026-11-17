@@ -421,10 +421,13 @@ class LLMAgent(Agent):
         n_open = max(1, self.context.get("open_orders", 1))
         orders = list(state.order_list[:n_open]) if state.order_list else []
         dish = lambda o: o + (" (served on a dish)" if k.need_dish(o) else "")
+        timers = getattr(state, "order_timers", None)     # deadlines on: steps left per open order
+        labels = [dish(o) + (f" [{timers[i]} steps left]" if timers and i < len(timers) else "")
+                  for i, o in enumerate(orders)]
         lines = [f"Time step {t} of {self.context['horizon']}. Score {self.score:+g}. "
                  f"Orders completed: {self.orders_done}.",
-                 (f"Current order: {dish(orders[0])}" if n_open == 1 and orders else
-                  "Open orders (oldest first): " + (", ".join(dish(o) for o in orders) or "none")),
+                 (f"Current order: {labels[0]}" if n_open == 1 and orders else
+                  "Open orders (oldest first): " + (", ".join(labels) or "none")),
                  f"You: at {tuple(me.position)}, holding {held_text(me.held_object)}."]
         seen = self.belief is not None
         if seen and not getattr(other, "visible", True):

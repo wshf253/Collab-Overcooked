@@ -77,7 +77,7 @@ REFERENCE = "_reference"
 CONFIG_KEYS = {
     "name", "layout", "menu", "horizon", "wrong_delivery_penalty", "no_repeat", "days",
     "episodes_per_day", "ego_index", "personas", "custom_personas", "run_seeds", "agent",
-    "conditions", "reference_agent", "open_orders", "view_radius", "partner",
+    "conditions", "reference_agent", "open_orders", "view_radius", "partner", "deadlines",
     "schedule", "order_lists", "eval_episodes", "knowledge_probe",
 }
 # Condition keys the runner handles (not passed to the agent).
@@ -101,6 +101,9 @@ class DaysConfig:
     ego_index: int = 0                  # player slot of the ego; the partner takes the other
     open_orders: int = 1                # orders open at once (any of them may be served)
     view_radius: Optional[int] = None   # partial view for every player (None = full view)
+    # Order timers with expiry (plan v3, 3.1): {slack, reference: {dish: steps}, expiry_penalty,
+    # urgent_steps}; None (default) = no timers, the original behaviour.
+    deadlines: Optional[Dict[str, Any]] = None
     personas: List[str] = field(default_factory=lambda: ["steady"])
     custom_personas: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     run_seeds: List[int] = field(default_factory=lambda: [0])
@@ -336,7 +339,8 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     ego, other = cfg.ego_index, 1 - cfg.ego_index
     env = ContinuousOrderEnv(menu, layout=cfg.layout, horizon=cfg.horizon,
                              wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat,
-                             open_orders=cfg.open_orders, order_mode=cfg.order_lists)
+                             open_orders=cfg.open_orders, order_mode=cfg.order_lists,
+                             deadlines=cfg.deadlines)
     start = env.reset(seed)
     context = {"day": day, "episode": episode, "episode_seed": seed, "layout": cfg.layout,
                "horizon": cfg.horizon, "menu": normalize_menu(menu), "index": ego,

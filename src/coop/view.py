@@ -130,5 +130,8 @@ class Belief:
             m = re.search(r"items in (\w+) not matching", msg)
             if m is None or m.group(1) not in self.utensil_pos or vis(self.utensil_pos[m.group(1)]):
                 errors.append(msg)
-        return ViewState(objects, players, state.order_list, ml, errors, state.timestep,
-                         dict(self.seen_t), self.radius, here)
+        vs = ViewState(objects, players, state.order_list, ml, errors, state.timestep,
+                       dict(self.seen_t), self.radius, here)
+        if hasattr(state, "order_timers"):
+            vs.order_timers = state.order_timers         # public, like the orders themselves
+        return vs

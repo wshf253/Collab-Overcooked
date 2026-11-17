@@ -889,6 +889,49 @@ XXBXCXBXX
   `days_persona_ing2.yaml`.
 - **For `coop.voi` / `coop.screen`:** pass `--layout open_ing2_env --menu` with the 8 dishes.
 
+## Plan v3: order timers and context features (`docs/CONTEXT_PARTNER_PLAN_v3.md`)
+
+**Order timers** (config block `deadlines`, off by default; old configs play identically,
+mock check over 2,821 episode files):
+- **Config:** `deadlines: {slack: s, reference: {dish: steps}, expiry_penalty: 20, urgent_steps: θ}`.
+- **Limit:** each order may stay open `round(s × reference[dish])` steps.
+- **Expiry:** the order closes unserved, `expiry_penalty` points are lost, and the next order opens.
+  The order record has `limit` and `expired_t`, and the summary has `orders_expired`.
+- **Visibility:** both players see the steps left. `state.order_timers` is passed through the
+  partial view, and the LLM observation shows `[N steps left]` after each open order.
+- **The 300-step horizon stays.** The scripted reference ego plays under the same timers.
+
+**Reference times** (`python -m coop.deadlines`). Median steps from issue to delivery for a
+steady scripted pair, `open_ing2_env`, 2 open orders, radius 2, seeds 0–15:
+
+| dish | pilot menu (3 dishes) | full 8-dish menu |
+|---|---|---|
+| boiled_potato | - | 36 |
+| boiled_carrot_slices | - | 45 |
+| boiled_potato_slices | 54 | 59 |
+| baked_carrot_soup | 64 | 66.5 |
+| baked_potato_soup | - | 72 |
+| mashed_potato | - | 61.5 |
+| mashed_potato_and_carrot_mixture | - | 63 |
+| sliced_carrot_and_potato_stew | 65 | 48.5 |
+
+The times depend on the menu (which orders compete), so measure them for the menu you run.
+
+**Context features** (`coop.context`). They are computed on the full state or on a player's own
+view:
+- `urgent`: open orders with at most θ steps left;
+- `on_order(who)`: the dish its held item serves, or its last choice;
+- `blocked`: kinds whose every utensil is running or holds finished food;
+- `prep_ready`: open dishes with a processed item waiting unused.
+
+`ContextTracker` turns them into events at the step a context starts.
+
+**Duplication check** (plan 3.3). When both players bring the last missing ingredient to one
+utensil, the second item is accepted: the executor checks only that the utensil is empty or
+loaded. Starting the utensil then throws the whole batch away. So duplication is a strong
+mismatch cost, a lost batch. The scripted players re-check and put the item down instead.
+Executor behaviour is unchanged.
+
 **Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
 the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day
 of 4 full-menu episodes, 4 cards × 8 seeds, batch2, LLM partner. Read the "interaction-episode

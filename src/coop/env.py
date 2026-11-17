@@ -78,6 +78,8 @@ class OrderRecord:
     completed_t: Optional[int] = None   # step index of the correct delivery
     delivered_by: Optional[int] = None
     wrong_deliveries: int = 0
+    limit: Optional[int] = None         # order timer (deadlines on): steps it may stay open
+    expired_t: Optional[int] = None     # step index at which it expired (closed unserved)
 
     @property
     def duration(self) -> Optional[int]:
@@ -126,12 +128,22 @@ class ContinuousOrderEnv:
         sanitize: bool = True,
         open_orders: int = 1,
         order_mode: str = "random",
+        deadlines: Optional[Dict[str, Any]] = None,
     ):
         if open_orders < 1:
             raise ValueError("open_orders must be >= 1")
         if order_mode not in ("random", "controlled"):
             raise ValueError("order_mode must be 'random' or 'controlled'")
         self.order_mode = order_mode
+        # Order timers (docs/CONTEXT_PARTNER_PLAN_v3.md, 3.1); None keeps the original behaviour.
+        # {"slack": s, "reference": {dish: steps}, "expiry_penalty": 20}: each order may stay
+        # open round(s x reference[dish]) steps; then it closes unserved, the penalty is lost
+        # and the next order opens. Both players see the steps left (state.order_timers).
+        self.deadlines = dict(deadlines) if deadlines else None
+        if self.deadlines is not None:
+            if float(self.deadlines.get("slack", 0)) <= 0:
+                raise ValueError("deadlines.slack must be > 0")
+            self.deadlines.setdefault("expiry_penalty", 20)
         if horizon < 1:
             raise ValueError("horizon must be >= 1")
         if wrong_delivery_penalty < 0:
@@ -151,6 +163,10 @@ class ContinuousOrderEnv:
         unknown = sorted(set(self.menu) - set(self.mdp.Recipe.recipe_list))
         if unknown:
             raise ValueError(f"Orders not producible in layout '{layout}': {unknown}")
+        if self.deadlines is not None:
+            missing = sorted(set(self.menu) - set(self.deadlines.get("reference") or {}))
+            if missing:
+                raise ValueError(f"deadlines.reference has no time for {missing}")
         self.layout = layout
         self.horizon = horizon
         self.max_orders = max_orders or horizon
@@ -185,12 +201,49 @@ class ContinuousOrderEnv:
         # Each episode owns its order list; the MDP's template is never mutated.
         self.env.state.order_list = list(sequence)
         self.log = EpisodeLog(seed=seed, order_sequence=list(sequence))
-        self.open_records = [OrderRecord(index=i, name=sequence[i], issued_t=0)
+        self.open_records = [OrderRecord(index=i, name=sequence[i], issued_t=0, limit=self.limit_of(sequence[i]))
                              for i in range(min(self.open_orders, len(sequence)))]
         self.log.orders.extend(self.open_records)
         self.next_index = len(self.open_records)
         self.score = 0.0
+        self._set_timers(self.env.state)
         return self.env.state
+
+    # ------------------------------------------------------------------ #
+    # Order timers
+    # ------------------------------------------------------------------ #
+    def limit_of(self, dish: str) -> Optional[int]:
+        if self.deadlines is None:
+            return None
+        return max(1, int(round(float(self.deadlines["slack"]) * float(self.deadlines["reference"][dish]))))
+
+    def steps_left(self, rec: OrderRecord, now: int) -> Optional[int]:
+        return None if rec.limit is None else rec.limit - (now - rec.issued_t)
+
+    def _set_timers(self, state) -> None:
+        if self.deadlines is not None:
+            state.order_timers = [self.steps_left(r, self.env.t) for r in self.open_records]
+
+    def _expire(self, state) -> List[str]:
+        """Close every open order whose timer ran out; the next orders of the sequence open."""
+        now, out = self.env.t, []
+        for rec in list(self.open_records):
+            if self.steps_left(rec, now) > 0:
+                continue
+            j = self.open_records.index(rec)
+            if state.order_list[j] != rec.name:
+                raise RuntimeError(f"Order timers disagree with the MDP at t={now}")
+            del state.order_list[j]
+            self.open_records.pop(j)
+            rec.expired_t = now
+            out.append(rec.name)
+            if self.next_index < len(self.log.order_sequence):
+                new = OrderRecord(index=self.next_index, name=self.log.order_sequence[self.next_index],
+                                  issued_t=now, limit=self.limit_of(self.log.order_sequence[self.next_index]))
+                self.next_index += 1
+                self.open_records.append(new)
+                self.log.orders.append(new)
+        return out
 
     def step(self, joint_action: Sequence[Any], parm: Optional[Sequence[Any]] = None
              ) -> Tuple[OvercookedState, float, bool, Dict[str, Any]]:
@@ -218,6 +271,14 @@ class ContinuousOrderEnv:
         state, reward, done, info = self.env.step(joint_action, parm)
         deliveries = self._resolve_deliveries(t, state, held, open_orders)
         self._check_consistency(reward, deliveries, open_orders, state)
+        if self.deadlines is not None:
+            for rec in self.open_records:          # orders opened by this step's deliveries
+                if rec.limit is None:
+                    rec.limit = self.limit_of(rec.name)
+            expired = self._expire(state)
+            reward = reward - len(expired) * float(self.deadlines["expiry_penalty"])
+            info = dict(info, expired=expired)
+            self._set_timers(state)
         self.score += reward
         self.log.rejected.extend(rejected)
         info = dict(info, deliveries=deliveries, rejected=rejected)
@@ -324,6 +385,14 @@ class ContinuousOrderEnv:
             "wrong_deliveries": sum(not d.correct for d in log.deliveries),
             "rejected_interactions": len(log.rejected),
             "mean_order_steps": sum(durations) / len(durations) if durations else None,
-            "orders": [dict(asdict(o), duration=o.duration) for o in log.orders],
+            "orders": [self._order_dict(o) for o in log.orders],
             "deliveries": [asdict(d) for d in log.deliveries],
+            **({"orders_expired": sum(o.expired_t is not None for o in log.orders),
+                "deadlines": self.deadlines} if self.deadlines is not None else {}),
         }
+
+    def _order_dict(self, o: OrderRecord) -> Dict[str, Any]:
+        d = dict(asdict(o), duration=o.duration)
+        if self.deadlines is None:          # the original record, unchanged
+            d.pop("limit"), d.pop("expired_t")
+        return d
