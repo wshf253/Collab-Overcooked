@@ -718,6 +718,15 @@ python -m coop.persona_check gate2 outputs/gate2_llm --out outputs/gate2_llm/gat
 - partner invalid replies and fallbacks;
 - the distinctness classifier.
 
+`persona_check why` shows why the partner breaks a rule. For each card and rule it lists:
+- the partner's non-adherent decisions, grouped by what happened;
+- how often a reminder for that rule was shown at the deciding step;
+- examples with the partner's stated goal, order and chosen action.
+
+```bash
+python -m coop.persona_check why outputs/gate1_llm --examples 3 --out outputs/gate1_llm/why.json
+```
+
 `persona_check gate2` and `voi --cards` report aligned − generic and aligned − misaligned for
 score (the primary outcome) and alignment (secondary), on two seed sets and per card, with a
 line saying whether there is score headroom (mean − 2 SE > 0).

@@ -23,6 +23,14 @@ Gate 2, does knowing the partner matter? (scripted egos: aligned / generic / mis
   card's evaluable rules of aligned / opportunities), paired over runs (card × seed), on
   the first and second half of the seeds separately and pooled, and per card.
   For the rule-based twin the same table comes from ``python -m coop.voi --cards ...``.
+
+Why does the partner break a rule? (any folder with a rule-following partner)
+
+    python -m coop.persona_check why outputs/gate1_llm [--card p3] [--rule serves] [--examples 4]
+
+* per card and rule: adherent / judged decisions, the partner's non-adherent decisions
+  grouped by what happened (numbers masked), how often a reminder for that rule was shown
+  at the deciding step, and examples with the partner's stated goal and chosen action.
 """
 from __future__ import annotations
 
@@ -314,6 +322,79 @@ def format_gate2(rep: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_NUM = re.compile(r"(?<![A-Za-z_])-?\d+")
+
+
+def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str] = None,
+        examples: int = 3) -> Dict[str, Any]:
+    """The partner's non-adherent decisions per card and rule, with what it said it was doing."""
+    import bisect
+    rows: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for ev_path in sorted(out.glob("runs/*/*/seed*/day*/ep*/rule_events.jsonl")):
+        d = ev_path.parent
+        card, seed, day, ep = d.parents[2].name, d.parents[1].name, d.parents[0].name, d.name
+        if card == NEUTRAL or (cards and card not in cards):
+            continue
+        judged = [json.loads(x) for x in ev_path.read_text().splitlines() if x.strip()]
+        judged = [j for j in judged if j.get("side") == "partner"
+                  and (not rule_filter or rule_filter in j["rule"])]
+        if not judged:
+            continue
+        log_path = d / "partner_log.json"
+        log = json.loads(log_path.read_text()) if log_path.exists() else {}
+        decisions = sorted(log.get("decisions") or [], key=lambda r: r.get("t", 0))
+        times = [r.get("t", 0) for r in decisions]
+        shown = {(r["t"], r["rule"]) for r in log.get("reminders") or []}
+        for j in judged:
+            row = rows.setdefault((card, j["rule"]), {"card": card, "rule": j["rule"], "n": 0, "adherent": 0,
+                                                      "not": Counter(), "ok": Counter(), "reminded": 0,
+                                                      "examples": [], "episodes": set()})
+            row["n"] += 1
+            pattern = _NUM.sub("N", str(j.get("note", "")))
+            if j["value"]:
+                row["adherent"] += 1
+                row["ok"][pattern] += 1
+                continue
+            row["not"][pattern] += 1
+            i = bisect.bisect_right(times, j["t"]) - 1          # the decision that chose this action
+            dec = decisions[i] if i >= 0 else {}
+            reminded = bool(dec) and (dec.get("t"), j["rule"]) in shown
+            row["reminded"] += reminded
+            where = f"{seed} {day} {ep}"
+            if len(row["examples"]) < examples and where not in row["episodes"]:
+                row["episodes"].add(where)
+                it = dec.get("intention") or {}
+                row["examples"].append({"where": where, "t": j["t"], "note": j.get("note"),
+                                        "decided_t": dec.get("t"), "goal": it.get("goal"), "order": it.get("order"),
+                                        "reconsider_when": it.get("reconsider_when"), "chosen": dec.get("chosen"),
+                                        "reminder": reminded})
+    out_rows = []
+    for (card, rule), r in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[1]["adherent"] / kv[1]["n"])):
+        r.pop("episodes")
+        r["rate"] = r["adherent"] / r["n"]
+        r["not"] = r["not"].most_common()
+        r["ok"] = r["ok"].most_common()
+        out_rows.append(r)
+    return {"folder": str(out), "rows": out_rows}
+
+
+def format_why(rep: Dict[str, Any]) -> str:
+    lines = [f"== why the partner breaks a rule: {rep['folder']} (all seeds) =="]
+    for r in rep["rows"]:
+        bad = r["n"] - r["adherent"]
+        lines.append(f"\n{r['card']}  {r['rule']}: {r['adherent']} of {r['n']} adherent ({100 * r['rate']:.0f}%)")
+        if not bad:
+            continue
+        lines.append(f"  not adherent ({bad}; reminder shown at the deciding step: {r['reminded']}):")
+        lines += [f"    {c:>4} x {p}" for p, c in r["not"][:6]]
+        lines.append("  adherent: " + "; ".join(f"{c} x {p}" for p, c in r["ok"][:3]))
+        for e in r["examples"]:
+            lines.append(f"  e.g. {e['where']} t={e['t']}: {e['note']} | decided t={e['decided_t']}: "
+                         f"{e['chosen']} | goal: {e['goal']!s:.90} | order: {e['order']} | "
+                         f"reconsider: {e['reconsider_when']!s:.60} | reminder: {'yes' if e['reminder'] else 'no'}")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -327,8 +408,17 @@ def main(argv=None):
     g2 = sub.add_parser("gate2")
     g2.add_argument("run_dir", type=Path)
     g2.add_argument("--out", type=Path)
+    w = sub.add_parser("why", help="the partner's non-adherent decisions per card and rule")
+    w.add_argument("run_dir", type=Path)
+    w.add_argument("--card", nargs="+", help="only these cards")
+    w.add_argument("--rule", help="only rules whose label contains this text")
+    w.add_argument("--examples", type=int, default=3)
+    w.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
-    if args.cmd == "gate1":
+    if args.cmd == "why":
+        rep = why(args.run_dir, args.card, args.rule, args.examples)
+        print(format_why(rep))
+    elif args.cmd == "gate1":
         rep = gate1(args.run_dir, args.calibrate, args.judge, args.bar)
         twin = gate1(args.twin, args.calibrate, args.judge, args.bar) if args.twin else None
         print(format_gate1(rep, twin))

@@ -18,7 +18,8 @@ from coop.env import ContinuousOrderEnv  # noqa: E402
 from coop.kitchen import Kitchen  # noqa: E402
 from coop.llm_partner import LLMPartner, macro_stage  # noqa: E402
 from coop.partner import PERSONAS, SimulatedHuman  # noqa: E402
-from coop.persona_check import format_gate1, format_gate2, gate1, gate2, play_rule_episode  # noqa: E402
+from coop.persona_check import (format_gate1, format_gate2, format_why, gate1, gate2,  # noqa: E402
+                                play_rule_episode, why)
 from coop.rule_partner import RulePlayer  # noqa: E402
 from coop.rules import (CATEGORIES, NEUTRAL, Rule, category, check_rules, load_cards, load_library,  # noqa: E402
                         parse_rule, render)
@@ -225,6 +226,17 @@ class LLMPartnerTests(unittest.TestCase):
         self.assertIn("distinctness", text)
         self.assertIn("p1", rep["cards"])
         self.assertIn("own_station(station=oven0)", rep["cards"]["p1"]["rules"])
+        w = why(self.tmp / "out", examples=2)
+        self.assertTrue(w["rows"])
+        self.assertNotIn("neutral", {r["card"] for r in w["rows"]})
+        for r in w["rows"]:
+            self.assertEqual(r["n"], r["adherent"] + sum(c for _, c in r["not"]))
+            self.assertLessEqual(len(r["examples"]), 2)
+            for e in r["examples"]:
+                self.assertIsNotNone(e["chosen"])            # matched to the partner decision that chose it
+        self.assertIn("adherent", format_why(w))
+        only = why(self.tmp / "out", cards=["p2"], rule_filter="serves")
+        self.assertTrue(all(r["card"] == "p2" and "serves" in r["rule"] for r in only["rows"]))
         g2 = self.tmp / "g2.yaml"
         g2.write_text((ROOT / "configs/coop/persona_gate2.yaml").read_text().replace("  type: llm\n", "  type: rule\n"))
         cfg = load_config(g2, run_seeds=[0, 1], horizon=80, episodes_per_day=1)

@@ -241,6 +241,39 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.16 Gate 1 with Qwen3.8-27B as partner (`gate1_llm`, 2026-11-17)
+Scripted steady ego, 4 cards + neutral, 4 seeds × 3 episodes, radius 2. The bar is 70% on judge
+seeds 2–3.
+
+- **Competence:** neutral 190 ± 10. Card minus neutral: p1 +2 ± 5, p2 −12 ± 2, p3 −8 ± 15,
+  p4 −22 ± 14. The margin is not set yet (plan §15); 15% of neutral (28 points) would pass all four.
+- **Distinctness:** 90% (chance 25%); p4 is misclassified in 4 of 12 episodes.
+- **Infrastructure:** 0.9–4.1 invalid replies per episode (p1 highest); fallbacks ≤ 0.3.
+- **Consistency:** no systematic fall over the three episodes. The one drop is p4
+  `order_priority`: 100 / 93 / 68%.
+- **Adherence passes** for:
+  - `own_station` on all cards (86–100%);
+  - `order_priority` (75–93%; better than the twin, whose radius-2 gap is known);
+  - `solo_dish` (83%) and `serves(ego)` (100%);
+  - `waits_for_commit` on p3 and p4 (80–83%);
+  - `on_takeover` and `on_contention` (few opportunities: 3–10);
+  - `split_dish` on p2, exactly at the bar (70%).
+- **Fails, mechanism:** `handover_spot` (p1 13%, p3 0% of 4, p4 29%).
+  `place_obj_on_counter()` takes no argument, so the executor uses the nearest free counter.
+  Neither the LLM partner nor the LLM ego can choose the spot. The twin can, which is why it
+  passes.
+- **Fails, unmeasurable:** `wants_supplies` (p3: 1–2 opportunities; twin 0).
+- **Fails, behaviour:**
+  - `split_dish` on p4 (57%);
+  - `serves(self)` on p3 (61%; the twin also only reaches 88%);
+  - `waits_for_commit` on p2 (62%).
+
+  The new `persona_check why` report shows which decisions break them.
+
+Next: read `why`, then revise the cards in a new card file (the running Gate 2 uses batch1). The
+plan's order is wording, then `enforce`, then drop. `handover_spot` and `wants_supplies` cannot be
+fixed by wording.
+
 ### 3.15 Score is the primary outcome; with the twin, the cards have no score headroom (2026-11-17)
 **Decision (user, 2026-11-17):** score is the primary outcome, alignment secondary (plan §15).
 
