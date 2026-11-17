@@ -104,7 +104,10 @@ class Executor:
             if place == "ingredient_dispenser":
                 if item not in k.raw:
                     return f"'{item}' is not a raw ingredient"
-                return None if self._targets_of("I") else "you cannot reach the ingredient dispenser"
+                if self._dispensers(item):
+                    return None
+                return (f"no ingredient dispenser you can reach gives {item}" if k.dispenser_of
+                        else "you cannot reach the ingredient dispenser")
             if place == "dish_dispenser":
                 if item != "dish":
                     return "the dish dispenser only gives 'dish'"
@@ -245,6 +248,9 @@ class Executor:
         return status, message
 
     # ------------------------------------------------------------------ #
+    def _dispensers(self, item: str) -> List[Pos]:
+        return [p for p in self.k.dispensers_for(item) if self.k.mine(p)]
+
     def _targets_of(self, tile: str) -> List[Pos]:
         return [p for p in self.k.cells.get(tile, []) if self.k.mine(p)]
 
@@ -261,7 +267,7 @@ class Executor:
         if m.name == "pickup":
             item, place = m.args
             if place == "ingredient_dispenser":
-                return self._targets_of("I"), item
+                return self._dispensers(item), item
             if place == "dish_dispenser":
                 return self._targets_of("D"), None
             if place == "counter":

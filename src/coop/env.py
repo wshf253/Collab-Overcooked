@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from overcooked_ai_py.data.layouts import read_layout_dict
 from overcooked_ai_py.mdp.actions import Action
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, OvercookedState
@@ -42,6 +43,9 @@ def unsafe_interact_reason(mdp: OvercookedGridworld, state: OvercookedState, ind
     if tile == "I":
         if parameter not in mdp.default_ingredients:
             return "the dispenser needs a raw ingredient name"
+        gives = (getattr(mdp, "dispensers", None) or {}).get(tuple(pos))
+        if gives is not None and parameter != gives:
+            return f"this dispenser only gives {gives}"
     elif tile in mdp.interactive_terrain:
         if parameter == START:
             if held or not obj or obj.catagory != "semi-finished" or obj.state[2] != 0:
@@ -133,6 +137,16 @@ class ContinuousOrderEnv:
         if wrong_delivery_penalty < 0:
             raise ValueError("wrong_delivery_penalty is a cost; pass a value >= 0")
         self.mdp = OvercookedGridworld.from_layout_name(layout)
+        # Optional layout key "dispensers": {ingredient: [x, y]}: each ingredient dispenser
+        # gives only its own ingredient (enforced by the interaction check below). Layouts
+        # without it keep the original behaviour: any dispenser gives any raw ingredient.
+        self.mdp.dispensers = {}
+        for ingredient, pos in (read_layout_dict(layout).get("dispensers") or {}).items():
+            pos = tuple(pos)
+            if self.mdp.get_terrain_type_at_pos(pos) != "I" or ingredient not in self.mdp.default_ingredients:
+                raise ValueError(f"layout '{layout}': dispenser {ingredient} at {pos} is not an ingredient "
+                                 "dispenser cell, or not one of the layout's ingredients")
+            self.mdp.dispensers[pos] = ingredient
         self.menu = normalize_menu(menu)
         unknown = sorted(set(self.menu) - set(self.mdp.Recipe.recipe_list))
         if unknown:

@@ -1,0 +1,40 @@
+# Open kitchen with one dispenser per ingredient (open_ing2_env: carrot left, potato right),
+# 8 dishes from carrot and potato, cards batch_ing2 (2026-11-17).
+# Gate 1 (docs/PERSONA_PARTNER_PLAN_v2.md, section 10): is the LLM persona partner usable?
+# Scripted steady ego with each pilot card played by the LLM partner (and the neutral
+# partner: same model, no rules, the competence baseline). 4 cards x 4 seeds x 3 episodes.
+# Analyse with: python -m coop.persona_check gate1 outputs/gate1_llm_ing2 [--twin outputs/gate1_twin_ing2]
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/persona_gate1_ing2.yaml --out outputs/gate1_llm_ing2 --workers 48
+name: persona_gate1_ing2
+layout: open_ing2_env
+menu: [boiled_potato, boiled_carrot_slices, boiled_potato_slices, baked_carrot_soup, baked_potato_soup, mashed_potato, mashed_potato_and_carrot_mixture, sliced_carrot_and_potato_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 1
+episodes_per_day: 3
+ego_index: 0
+personas: [p1, p2, p3, p4, neutral]
+run_seeds: [0, 1, 2, 3]
+agent: {type: scripted, persona: steady}
+conditions:
+  steady_ego: {}
+reference_agent: null
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ing2.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL       # scripts/run_qwen38_days.sh defaults these to the ego's server
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120

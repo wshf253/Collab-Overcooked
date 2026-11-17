@@ -12,6 +12,9 @@ from typing import Dict, List, Optional, Tuple
 from .nav import Pos, floor_cells, reach, touches
 
 RECIPE_DIR = Path(__file__).resolve().parents[1] / "prompts" / "recipe"
+# Recipe texts for dishes added by this research code. Kept apart from RECIPE_DIR, which the
+# original benchmark (src/main.py) lists in full.
+COOP_RECIPE_DIR = Path(__file__).resolve().parents[1] / "prompts" / "recipe_coop"
 TILE_NAMES = {"X": "counter", "I": "ingredient dispenser", "D": "dish dispenser",
               "S": "serving location", " ": "floor"}
 
@@ -37,6 +40,7 @@ class Kitchen:
                 for product, spec in products.items():
                     self.recipes[product] = (kind, list(spec["recipe"]))
         self.raw = list(mdp.default_ingredients)
+        self.dispenser_of: Dict[Pos, str] = dict(getattr(mdp, "dispensers", None) or {})
         # Reachability is fixed by the layout: players never cross the counters.
         players = start_state.players
         self.my_region = reach(self.floor, tuple(players[index].position))
@@ -51,6 +55,12 @@ class Kitchen:
 
     def counters(self) -> List[Pos]:
         return [p for p in self.cells.get("X", []) if self.mine(p) or self.theirs(p)]
+
+    def dispensers_for(self, item: str) -> List[Pos]:
+        """Ingredient dispensers that give ``item`` (every one, on layouts without per-ingredient dispensers)."""
+        if not self.dispenser_of:
+            return list(self.cells.get("I", []))
+        return [p for p, i in self.dispenser_of.items() if i == item]
 
     def need_dish(self, item: str) -> bool:
         return bool(self.mdp.need_dish.get(item, 0))
@@ -76,7 +86,7 @@ class Kitchen:
         return f"{verb} in {kind}({' + '.join(self.chain(c) for c in inputs)})"
 
     def recipe_text(self, dish: str) -> str:
-        files = sorted(RECIPE_DIR.glob(f"*_{dish}.txt")) if RECIPE_DIR.exists() else []
+        files = [f for d in (RECIPE_DIR, COOP_RECIPE_DIR) if d.exists() for f in sorted(d.glob(f"*_{dish}.txt"))]
         files = [f for f in files if f.stem.split("_", 1)[-1] == dish]
         text = files[0].read_text().strip() if files else f"NAME: {dish}"
         dish_note = "served on a dish" if self.need_dish(dish) else "served without a dish"
@@ -93,12 +103,16 @@ class Kitchen:
             rows.append(f"  y={y} " + "".join(row))
         legend = ["Legend: ' ' floor, X counter (holds one item), I ingredient dispenser (any raw "
                   "ingredient), D dish dispenser, S serving location"]
+        if self.dispenser_of:
+            legend = ["Legend: ' ' floor, X counter (holds one item), I ingredient dispenser (each gives "
+                      "one raw ingredient, listed below), D dish dispenser, S serving location"]
         for u, p in self.utensils.items():
             legend.append(f"  {u} at {p} ({self.mdp.utensils[self.kind_of[u]]['symbol']}): "
                           f"start it with {self.verb_of[u]}({u}); reachable by {self.side(p)}")
         for tile, name in (("I", "ingredient dispenser"), ("D", "dish dispenser"), ("S", "serving location")):
             for p in self.cells.get(tile, []):
-                legend.append(f"  {name} at {p}: reachable by {self.side(p)}")
+                gives = f" (gives {self.dispenser_of[p]})" if tile == "I" and p in self.dispenser_of else ""
+                legend.append(f"  {name} at {p}{gives}: reachable by {self.side(p)}")
         counters = [p for p in self.cells.get("X", []) if self.mine(p) or self.theirs(p)]
         shared = [p for p in counters if self.mine(p) and self.theirs(p)]
         stations = list(self.utensils.values()) + [p for t in "IDS" for p in self.cells.get(t, [])]

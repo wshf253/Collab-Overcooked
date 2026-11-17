@@ -200,6 +200,7 @@ class SimulatedHuman:
                          for kind, spec in mdp.utensils.items() if kind != "none"}
         self.kind_at = {p: kind for kind, ps in self.stations.items() for p in ps}
         self.raw = list(mdp.default_ingredients)
+        self.dispenser_of: Dict[Pos, str] = dict(getattr(mdp, "dispensers", None) or {})
         self.job: Optional[Job] = None
         self.job_t = 0
         self.delay_left = 0
@@ -395,7 +396,7 @@ class SimulatedHuman:
 
     def _job_targets(self, job: Job) -> List[Pos]:
         if job.kind == "bring":
-            return self.cells.get("I", []) if job.pos is None else [job.pos]
+            return self._dispenser_cells(job.item) if job.pos is None else [job.pos]
         if job.kind == "supply_dish":
             dishes = [p for p, o in self.objects.items() if o.name == "dish"]
             return dishes or self.cells.get("D", [])
@@ -558,7 +559,7 @@ class SimulatedHuman:
                 out.append(self._bring(item, dest, p))
             return out
         if item not in self.recipes:        # raw ingredient
-            if any(self._mine(p) for p in self.cells.get("I", [])):
+            if any(self._mine(p) for p in self._dispenser_cells(item)):
                 return [self._bring(item, dest, None)]
             return []
         kind, recipe = self.recipes[item]
@@ -644,7 +645,7 @@ class SimulatedHuman:
             if held is not None:
                 return self._go(self._free_counters(shared=False)), None
             if job.pos is None:
-                action = self._go(self.cells.get("I", []))
+                action = self._go(self._dispenser_cells(job.item))
                 return action, (self._ingredient(job, t) if action == Action.INTERACT else None)
             return self._go([job.pos]), None
         if job.kind in ("start", "clear", "unload"):
@@ -677,10 +678,17 @@ class SimulatedHuman:
                 self.events.append({"t": t, "type": "slip", "job": job.describe(), "took": self.slip})
         return self.slip or job.item
 
+    def _dispenser_cells(self, item: str) -> List[Pos]:
+        """Dispensers that give ``item`` (all of them on layouts without per-ingredient dispensers)."""
+        if not self.dispenser_of:
+            return self.cells.get("I", [])
+        return [p for p, i in self.dispenser_of.items() if i == item]
+
     def _wrong_ingredients(self, job: Job) -> List[str]:
         """Ingredients that would spoil the batch at the destination (no recipe accepts it).
-        Slips only happen when I put the item into the utensil myself."""
-        if job.dest is None or not self._can_place(job.dest):
+        Slips only happen when I put the item into the utensil myself, and only where a
+        dispenser gives every ingredient."""
+        if job.dest is None or not self._can_place(job.dest) or self.dispenser_of:
             return []
         kind, _ = self.recipes[job.dest]
         station, _ = self._select_station(job.dest)

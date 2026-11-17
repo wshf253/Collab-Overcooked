@@ -241,6 +241,33 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.19 Open kitchen with one dispenser per ingredient (`open_ing2_env`, 2026-11-17)
+**User's direction:** keep the map open (a divided map makes knowing the partner meaningless,
+because roles are fixed), with more ingredients and more recipes. Start with two ingredients,
+one dispenser each.
+
+**Built:**
+- **Kitchen:** two of every utensil; a carrot dispenser on the left wall and a potato dispenser
+  on the right.
+- **Menu:** 8 dishes from carrot and potato, including two blender dishes and two
+  two-ingredient dishes (`docs/coop-setting.md`).
+- **Cards and configs:** `batch_ing2` cards and `*_ing2` configs.
+- **Old layouts unchanged:** a mock check found every episode file of the old configs
+  byte-identical.
+
+**Scripted checks:**
+- **A steady pair makes all 8 dishes.** 0 refused interactions; carrots are only taken on the
+  left, potatoes only on the right. Score 205 (full view), 173 (radius 2).
+- **Twin adherence:** 94–98% per card (full view), 90–96% (radius 2). `wants_supplies` still
+  has only 1 opportunity in 8 episodes.
+- **Twin Gate 2** (radius 2, `outputs/gate2_twin_ing2.json`):
+  - aligned − generic score −13 ± 7 (seeds 0–7) / −9 ± 6 (seeds 8–15);
+  - aligned − uninformed −22 ± 7 / −3 ± 6;
+  - alignment +13 / +17.
+
+  As before, scripted egos gain nothing from knowing the partner (§3.18). Only the LLM ego can
+  answer whether this kitchen gives knowing the partner a value: `persona_value_ing2.yaml`.
+
 ### 3.18 Revised cards: "waits for its things" (batch2, 2026-11-17)
 **User's choice:** the partner's habits should cost time when ignored, through waiting.
 Radius 2 is kept.
@@ -693,9 +720,10 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 0. **Design reference: `docs/PERSONA_PARTNER_PLAN_v2.md`** (dates and stop points not binding).
    Built: the persona partner and gate tools (§3.13), and the multi-day learning setup (§3.14).
    Score is the primary outcome (§3.15). Gates 1 and 2 on batch1 are done (§3.16–3.17): the
-   partner is usable, and there is no score headroom. Revised cards (batch2, §3.18). Next:
-   Gate 1 on batch2 and the value check with the LLM ego (`persona_value.yaml`). Then the
-   pilot with `days_persona.yaml` (now batch2).
+   partner is usable, and there is no score headroom. Revised cards (batch2, §3.18). Then a
+   new open kitchen with one dispenser per ingredient (`open_ing2_env`, §3.19). Next: Gate 1
+   and the value check with the LLM ego on that kitchen (`persona_gate1_ing2.yaml`,
+   `persona_value_ing2.yaml`), then the pilot with `days_persona_ing2.yaml`.
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated

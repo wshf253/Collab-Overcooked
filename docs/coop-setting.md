@@ -125,6 +125,7 @@ players can do every stage will separate the preference types better.
 | `new_env` | Collab-Overcooked's original 5×5 kitchen, split by a column of counters. Left side: ingredient dispenser, chopping board, dish dispenser, blender. Right side: pot, oven, serving location. Items pass over the 3 shared counters. | Fixed roles: the right player cooks and serves, the left player supplies. |
 | `open_env` | 7×5 open kitchen with one of each station around the walls; both players can reach everything. | Roles are chosen, so who does which stage (preference) is visible. Players can also get in each other's way. |
 | `open2_env` | 9×5 open kitchen with two of every utensil (pot, oven, chopping board, blender), one ingredient dispenser, dish dispenser and serving location. | The same, but both players can work in parallel instead of waiting for a shared utensil. |
+| `open_ing2_env` | 9×5 open kitchen with two of every utensil and **one dispenser per ingredient**: carrot on the left wall (0, 1), potato on the right wall (8, 1). Its own 8-dish menu from those two (below). | Who fetches which ingredient, and the blender and two-ingredient dishes, give the partner's habits more to act on. The map stays open: either cook can do any job. |
 
 ```
 new_env        open_env       open2_env
@@ -849,6 +850,44 @@ in the ego's view (Chebyshev distance ≤ view radius).
 - `dayDD/consolidation.json`;
 - `dayDD/knowledge_probe.json`;
 - `day00/` (before day 1).
+
+**Kitchen with one dispenser per ingredient** (`open_ing2_env`, 2026-11-17).
+
+```
+XXPXOXPXX     I (0,1) carrot, I (8,1) potato: each dispenser gives only its ingredient
+I       I     P pot ×2, O oven ×2 (top middle, right), C chopping board ×2,
+C 1   2 S     B blender ×2, D dishes, S serving
+D       O
+XXBXCXBXX
+```
+
+- **Menu** (8 dishes, from carrot and potato):
+
+  | dish | made from | steps |
+  |---|---|---|
+  | `boiled_potato` | potato | pot |
+  | `boiled_carrot_slices` | carrot | board, pot |
+  | `boiled_potato_slices` | potato | board, pot |
+  | `baked_carrot_soup` | carrot | board, oven, pot (dish) |
+  | `baked_potato_soup` | potato | board, oven, pot (dish) |
+  | `mashed_potato` | potato | board, pot, blender (dish) |
+  | `mashed_potato_and_carrot_mixture` | potato + carrot | boiled potato slices and a carrot into the blender (dish) |
+  | `sliced_carrot_and_potato_stew` | carrot + potato | carrot slices and a potato into the pot (dish) |
+
+- **How it works:**
+  - **Layout key** `"dispensers": {ingredient: [x, y]}`. `ContinuousOrderEnv` refuses an
+    interaction that asks a dispenser for another ingredient. The executor and the scripted
+    players walk to the right one, and the map in the prompt says what each dispenser gives.
+    Layouts without the key are unchanged (mock check: identical episodes).
+  - **Recipe texts** for the new dishes are in `src/prompts/recipe_coop/`, because the original
+    benchmark lists `src/prompts/recipe/` in full.
+- **Cards** `configs/coop/personas/batch_ing2.yaml`: batch2's personas with dishes from this menu.
+  - p2 splits the stew.
+  - p4 splits the blender mixture and owns `blender0`.
+  - p3 keeps `wants_supplies`.
+- **Configs:** `persona_gate1_ing2.yaml`, `persona_gate1_twin_ing2.yaml`, `persona_value_ing2.yaml`,
+  `days_persona_ing2.yaml`.
+- **For `coop.voi` / `coop.screen`:** pass `--layout open_ing2_env --menu` with the 8 dishes.
 
 **Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
 the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day

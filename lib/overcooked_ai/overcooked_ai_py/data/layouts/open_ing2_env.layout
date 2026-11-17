@@ -1,0 +1,74 @@
+{
+    "grid":  """XXPXOXPXX
+                I       I
+                C 1   2 S
+                D       O
+                XXBXCXBXX""",
+    "start_order_list": ["apple"],
+    "order_probability":{
+        "onion_soup": 1
+    },
+    "utensils": {
+        "pot": {"symbol": "P","operation":"cook"},
+        "chopping_board": {"symbol": "C","operation":"cut"},
+        "oven": {"symbol": "O","operation":"bake"},
+        "blender": {"symbol":"B","operation":"stir"},
+        "none":{"symbol":"N","operation":"none"}
+    },
+    "utensil_agent0":{
+        "pot":"cook",
+        "oven":"bake"
+    },
+    "utensil_agent1":{
+        "chopping_board":"cut",
+        "blender":"stir"
+    },
+    "cook_time": 3,
+    "num_items_for_soup": 3,
+    "delivery_reward": 20,
+    "rew_shaping_params": None,
+    "ingredients": ["carrot", "potato"],
+    "dispensers": {"carrot": [0, 1], "potato": [8, 1]},
+    "recipes":{
+        "pot": {
+            "boiled_potato": {"recipe": ["potato"], "cook_time": 3},
+            "boiled_carrot_slices": {"recipe": ["carrot_slices"], "cook_time": 3},
+            "boiled_potato_slices": {"recipe": ["potato_slices"], "cook_time": 3},
+            "baked_carrot_soup": {"recipe": ["baked_carrot_slices"], "cook_time": 3},
+            "baked_potato_soup": {"recipe": ["baked_potato_slices"], "cook_time": 3},
+            "sliced_carrot_and_potato_stew": {"recipe": ["carrot_slices", "potato"], "cook_time": 3}
+        },
+        "chopping_board": {
+            "carrot_slices": {"recipe": ["carrot"], "cook_time": 3},
+            "potato_slices": {"recipe": ["potato"], "cook_time": 3}
+        },
+        "oven": {
+            "baked_carrot_slices": {"recipe": ["carrot_slices"], "cook_time": 3},
+            "baked_potato_slices": {"recipe": ["potato_slices"], "cook_time": 3}
+        },
+        "blender": {
+            "mashed_potato": {"recipe": ["boiled_potato_slices"], "cook_time": 3},
+            "mashed_potato_and_carrot_mixture": {"recipe": ["boiled_potato_slices", "carrot"], "cook_time": 3}
+        },
+        "none": {
+            "apple": {"recipe": ["apple"], "cook_time": 0}
+        }
+    },
+    "need_dish": {
+        "apple": 0,
+        "carrot": 0,
+        "potato": 0,
+        "carrot_slices": 0,
+        "potato_slices": 0,
+        "baked_carrot_slices": 0,
+        "baked_potato_slices": 0,
+        "boiled_potato": 0,
+        "boiled_carrot_slices": 0,
+        "boiled_potato_slices": 0,
+        "baked_carrot_soup": 1,
+        "baked_potato_soup": 1,
+        "sliced_carrot_and_potato_stew": 1,
+        "mashed_potato": 1,
+        "mashed_potato_and_carrot_mixture": 1
+    }
+}

@@ -1,0 +1,58 @@
+# Open kitchen with one dispenser per ingredient (open_ing2_env: carrot left, potato right),
+# 8 dishes from carrot and potato, cards batch_ing2 (2026-11-17).
+# Value check (2026-11-17): is knowing the partner worth points to the LLM ego?
+# oracle (told the card's "wants" lines) minus tom_struct (no knowledge), paired on the same
+# episodes, with the LLM persona partner on the cards batch_ing2. Score is the primary
+# outcome. One day of 4 episodes on the full menu per run; the run (card x seed) is the unit.
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/persona_value_ing2.yaml --out outputs/persona_value_ing2 --workers 48
+# Analyse: python -m coop.learning outputs/persona_value_ing2   (interaction-episode contrasts)
+name: persona_value_ing2
+layout: open_ing2_env
+menu: [boiled_potato, boiled_carrot_slices, boiled_potato_slices, baked_carrot_soup, baked_potato_soup, mashed_potato, mashed_potato_and_carrot_mixture, sliced_carrot_and_potato_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 1
+episodes_per_day: 4
+order_lists: controlled
+ego_index: 0
+personas: [p1, p2, p3, p4]
+run_seeds: [0, 1, 2, 3, 4, 5, 6, 7]
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ing2.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: false
+  tom: true
+  tom_mode: structured
+  max_tokens: 400
+  model_max_tokens: 1000
+conditions:
+  tom_struct: {memory: false}
+  oracle: {memory: false, oracle: true}
+reference_agent: {type: scripted, persona: steady}

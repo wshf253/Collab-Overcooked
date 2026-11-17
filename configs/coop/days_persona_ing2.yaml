@@ -1,0 +1,94 @@
+# Open kitchen with one dispenser per ingredient (open_ing2_env: carrot left, potato right),
+# 8 dishes from carrot and potato, cards batch_ing2 (2026-11-17).
+# Multi-day partner learning with the LLM persona partner (docs/PERSONA_PARTNER_PLAN_v2.md,
+# sections 6-11). 5 days x 3 interaction episodes, then 2 held-out episodes on a frozen copy
+# of the ego's memory after each day (and before day 1: day 0), and the knowledge probe.
+# Every ego condition uses structured ToM and the same observation and actions.
+#
+#   tom_struct   no memory across episodes or days (within-episode inference only)
+#   memory       partner file rewritten each day from the day's notes (behaviour only)
+#   memory_fb    the same, plus the partner's feedback at the end of each day
+#   latest_fb    no file: only the previous day's feedback (is accumulation needed?)
+#   oracle       the card's "wants" lines up front, no file (can the ego use the knowledge?)
+#   swap_other   memory_fb's file of ANOTHER card (same seed, previous day), own feedback
+#   swap_same    memory_fb's file of the SAME card from another seed, own feedback
+#   placebo      a neutral file of the same headings and length, own feedback
+# Pilot: --conditions tom_struct memory memory_fb oracle swap_other --run-seeds 0 1 2
+# Analyse: python -m coop.learning outputs/days_persona_ing2
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/days_persona_ing2.yaml --out outputs/days_persona_ing2 --workers 48
+name: days_persona_ing2
+layout: open_ing2_env
+menu: [boiled_potato, boiled_carrot_slices, boiled_potato_slices, baked_carrot_soup, baked_potato_soup, mashed_potato, mashed_potato_and_carrot_mixture, sliced_carrot_and_potato_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 5
+episodes_per_day: 3
+eval_episodes: 2
+knowledge_probe: true
+order_lists: controlled
+schedule:
+  1: [boiled_potato, boiled_carrot_slices, boiled_potato_slices]
+  2: [boiled_potato, boiled_carrot_slices, boiled_potato_slices, baked_carrot_soup, baked_potato_soup, sliced_carrot_and_potato_stew]
+  3: all
+  4: all
+  5: all
+ego_index: 0
+personas: [p1, p2, p3, p4]
+run_seeds: [0, 1, 2, 3]
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ing2.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: false
+  tom: true
+  tom_mode: structured
+  max_tokens: 400
+  model_max_tokens: 1000
+conditions:
+  tom_struct: {memory: false}
+  memory: {memory: true, memory_mode: model_daily}
+  memory_fb: {memory: true, memory_mode: model_daily, feedback: specific}
+  latest_fb: {memory: true, memory_mode: latest_feedback, feedback: specific}
+  oracle: {memory: false, oracle: true}
+  swap_other:
+    memory: true
+    memory_mode: model_daily
+    feedback: specific
+    memory_source: {type: swap, from: memory_fb, donor: card}
+  swap_same:
+    memory: true
+    memory_mode: model_daily
+    feedback: specific
+    memory_source: {type: swap, from: memory_fb, donor: seed}
+  placebo:
+    memory: true
+    memory_mode: model_daily
+    feedback: specific
+    memory_source: {type: placebo, from: memory_fb}
+reference_agent: {type: scripted, persona: steady}

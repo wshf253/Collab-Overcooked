@@ -1,0 +1,12 @@
+NAME:
+Sliced Carrot and Potato Stew
+
+INGREDIENTS:
+carrot (1)
+potato(1)
+
+COOKING STEPs:
+1. Cut a carrot into slices.
+2. Place the carrot slices and a potato in a pot.
+3. Cook the ingredients in the pot for 3 timesteps.
+4. Fill a dish with the stew from the pot and serve.

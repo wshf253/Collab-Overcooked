@@ -1,0 +1,11 @@
+NAME:
+Mashed Potato
+
+INGREDIENTS:
+potato(1)
+
+COOKING STEPs:
+1. Cut a potato into slices.
+2. Place the potato slices in a pot and cook for 3 timesteps.
+3. Put the boiled potato slices in a blender and stir for 3 timesteps.
+4. Fill a dish with the mashed potato from the blender and serve.

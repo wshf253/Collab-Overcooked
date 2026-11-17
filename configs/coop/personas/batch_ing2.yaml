@@ -1,0 +1,47 @@
+# Persona cards for the open kitchen with one dispenser per ingredient (open_ing2_env:
+# carrot dispenser on the left wall, potato dispenser on the right wall; 8 dishes from carrot
+# and potato, 2026-11-17). Same personas and design as batch2 ("waits for its things"), with
+# dishes from the new menu:
+#   - p2's split dish is the carrot-and-potato stew;
+#   - p4's split dish is the blender dish (potato-and-carrot mixture), and its station is a
+#     blender, so the blenders matter;
+#   - p3 keeps wants_supplies (two of the eight dishes need two raw ingredients, from
+#     dispensers on opposite walls, so supplying is a real job here).
+# "neutral" is built in.
+
+p1:
+  backstory: "Ten years in a bakery before this job. Methodical and proud of her oven work; she dislikes being interrupted in the middle of a task."
+  rules:
+    - own_station: {station: oven0, when_taken: wait}
+    - solo_dish: {dish: baked_carrot_soup}
+    - order_priority: {which: oldest}
+    - on_contention: {mode: insists}
+    - on_takeover: {}
+
+p2:
+  backstory: "A prep cook who loves knife work and mise en place. Quick at chopping, happy to leave the finishing touches and the pass to someone else."
+  rules:
+    - split_dish: {dish: sliced_carrot_and_potato_stew, patience: 40}
+    - serves: {who: ego, patience: 40}
+    - own_station: {station: chopping_board1, when_taken: wait}
+    - order_priority: {which: newest}
+    - on_contention: {mode: yields}
+    - waits_for_commit: {}
+
+p3:
+  backstory: "Started as a waiter and moved into the kitchen. Likes to be the one who hands the food over, and likes to stay put while a dish comes together."
+  rules:
+    - serves: {who: self}
+    - own_station: {station: pot1, when_taken: wait}
+    - wants_supplies: {}
+    - on_contention: {mode: yields}
+    - waits_for_commit: {}
+
+p4:
+  backstory: "A careful cook who watches before acting. Prefers to prepare things properly and let others finish, and keeps to the newest tickets."
+  rules:
+    - split_dish: {dish: mashed_potato_and_carrot_mixture, patience: 40}
+    - order_priority: {which: newest}
+    - own_station: {station: blender0, when_taken: wait}
+    - on_takeover: {}
+    - waits_for_commit: {}

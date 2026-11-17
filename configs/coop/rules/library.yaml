@@ -27,7 +27,9 @@ own_station:
 
 solo_dish:
   category: dish
-  params: {dish: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]}
+  params: {dish: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew,
+                 boiled_potato, boiled_carrot_slices, boiled_potato_slices, baked_potato_soup, mashed_potato,
+                 mashed_potato_and_carrot_mixture, sliced_carrot_and_potato_stew]}
   text: "Whenever there is an order for {dish}, you make it yourself from start to finish: every ingredient, every step, the plating and the delivery. You don't want help with it."
   fallback: "While {dish} has nothing to do (it is cooking), you may help with other orders."
   wants: "Do not add to, plate or serve {dish}; leave it all to me."
@@ -35,7 +37,9 @@ solo_dish:
 
 split_dish:
   category: dish
-  params: {dish: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]}
+  params: {dish: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew,
+                 boiled_potato, boiled_carrot_slices, boiled_potato_slices, baked_potato_soup, mashed_potato,
+                 mashed_potato_and_carrot_mixture, sliced_carrot_and_potato_stew]}
   text: "For {dish} you do the preparation: you get and process the ingredients and load the final utensil. Then you leave it: starting the final utensil, plating and delivering {dish} is your partner's job."
   options: {patience: [20, 40, 60]}
   fallback: "If a loaded {dish} batch or finished {dish} has waited {patience} steps without your partner coming, finish it yourself."

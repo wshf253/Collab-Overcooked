@@ -1,0 +1,10 @@
+NAME:
+Boiled Carrot Slices
+
+INGREDIENTS:
+carrot(1)
+
+COOKING STEPs:
+1. Cut a carrot into slices.
+2. Place the carrot slices into the pot and cook for 3 timesteps.
+3. Afterwards, take the boiled carrot slices directly from the pot and serve.

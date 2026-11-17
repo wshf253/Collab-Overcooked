@@ -1,0 +1,10 @@
+NAME:
+Boiled Potato
+
+INGREDIENTS:
+potato (1)
+
+COOKING STEPs:
+1. Pick up a potato.
+2. Place the potato in the pot and cook for 3 timesteps.
+3. Take the potato out of the pot and serve it.

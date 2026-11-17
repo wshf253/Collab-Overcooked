@@ -773,6 +773,8 @@ def code_version(layout: str, extra: Optional[List[str]] = None) -> str:
         h.update((REPO / rel).read_bytes())
     for f in sorted((REPO / "src" / "prompts" / "recipe").glob("*.txt")):
         h.update(f.read_bytes())
+    for f in sorted((REPO / "src" / "prompts" / "recipe_coop").glob("*.txt")):
+        h.update(f.read_bytes())
     return h.hexdigest()[:16]
 
 
