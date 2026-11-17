@@ -172,6 +172,18 @@ class MockBackend(Backend):
                                        "orders": "no fixed habit"},
                    "stage_shares": {"prep": 34, "cook": 33, "serve": 33},
                    "notes": "mock notes"}
+        elif "EPISODE_NOTE" in last:
+            out = {"note": "mock note: I took the oldest order, my partner took the other."}
+        elif "PARTNER_FILE_UPDATE" in last:
+            out = {"partner_file": "## Partner Preferences\n- When both pots are free, they use pot0. Evidence: +D1E1. "
+                                   "Source: observed\n\n## Partner Reactions\n- (nothing yet)\n\n## Cooperation "
+                                   "Strategy\n- I use pot1. Follows from: pot0 preference\n\n## Uncertainties\n"
+                                   "- Do they prefer an order?; watch their first pick"}
+        elif "DAY_FEEDBACK" in last:
+            out = {"feedback": "Good day. Please leave the oven to me."}
+        elif "KNOWLEDGE_PROBE" in last:
+            ids = re.findall(r"^([\w:]+): ", last, flags=re.M)
+            out = {"answers": {i: "no preference" for i in ids}}
         elif "PARTNER_MODEL_UPDATE" in last:
             out = {"partner_model": "## How they choose what to do (with evidence)\n- mock habit\n\n"
                                     "## How they react to me\n- mock\n\n## What I should do with them\n- mock"

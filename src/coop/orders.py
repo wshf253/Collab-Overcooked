@@ -50,3 +50,20 @@ def make_order_sequence(menu: Menu, seed: int, length: int, no_repeat: bool = Fa
         pool = [n for n in names if not (no_repeat and seq and n == seq[-1])]
         seq.append(rng.choices(pool, weights=[weights[n] for n in pool], k=1)[0])
     return seq
+
+
+def make_controlled_sequence(menu: Menu, seed: int, length: int, copies: int = 1) -> List[str]:
+    """Controlled order list: blocks that contain every menu dish ``copies`` times, each
+    block shuffled with a private RNG seeded by ``seed``, repeated to ``length``. Every
+    dish appears equally often, so a dish-tied rule is observable on a known schedule
+    (docs/PERSONA_PARTNER_PLAN_v2.md, section 6). Weights are ignored."""
+    if length < 1 or copies < 1:
+        raise ValueError("length and copies must be >= 1")
+    names = sorted(normalize_menu(menu))
+    rng = random.Random(seed)
+    seq: List[str] = []
+    while len(seq) < length:
+        block = [n for n in names for _ in range(copies)]
+        rng.shuffle(block)
+        seq.extend(block)
+    return seq[:length]

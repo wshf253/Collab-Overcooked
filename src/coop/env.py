@@ -26,7 +26,7 @@ from overcooked_ai_py.mdp.actions import Action
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, OvercookedState
 
-from .orders import Menu, make_order_sequence, normalize_menu
+from .orders import Menu, make_controlled_sequence, make_order_sequence, normalize_menu
 
 DELIVER_ACTION = "deliver_soup()"
 START = "[START]"
@@ -107,6 +107,8 @@ class ContinuousOrderEnv:
         no_repeat: never issue the same order twice in a row.
         sanitize: turn unsafe interactions into "stay" (see module docstring).
         open_orders: how many orders are open at once (any of them may be served).
+        order_mode: "random" (default: seeded draws by weight) or "controlled" (blocks
+            with every dish once, shuffled; see ``orders.make_controlled_sequence``).
     """
 
     def __init__(
@@ -119,9 +121,13 @@ class ContinuousOrderEnv:
         no_repeat: bool = False,
         sanitize: bool = True,
         open_orders: int = 1,
+        order_mode: str = "random",
     ):
         if open_orders < 1:
             raise ValueError("open_orders must be >= 1")
+        if order_mode not in ("random", "controlled"):
+            raise ValueError("order_mode must be 'random' or 'controlled'")
+        self.order_mode = order_mode
         if horizon < 1:
             raise ValueError("horizon must be >= 1")
         if wrong_delivery_penalty < 0:
@@ -153,7 +159,10 @@ class ContinuousOrderEnv:
     # Episode lifecycle
     # ------------------------------------------------------------------ #
     def reset(self, seed: int) -> OvercookedState:
-        sequence = make_order_sequence(self.menu, seed, self.max_orders, self.no_repeat)
+        if self.order_mode == "controlled":
+            sequence = make_controlled_sequence(self.menu, seed, self.max_orders)
+        else:
+            sequence = make_order_sequence(self.menu, seed, self.max_orders, self.no_repeat)
         self.mdp.start_order_list = list(sequence)
         if self.env is None:
             self.env = OvercookedEnv(self.mdp, horizon=self.horizon)

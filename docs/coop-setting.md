@@ -721,6 +721,94 @@ python -m coop.persona_check gate2 outputs/gate2_llm --out outputs/gate2_llm/gat
 `persona_check gate2` and `voi --cards` report aligned − generic and aligned − misaligned for
 score and alignment, on two seed sets and per card.
 
+## Multi-day partner learning (plan v2, sections 6–11)
+
+Config `configs/coop/days_persona.yaml`. New keys are all opt-in; old configs play exactly
+as before (mock check: identical steps, prompts, summaries and memory).
+
+| key | meaning |
+|---|---|
+| `schedule: {1: [...], 2: [...], 3: all}` | dishes of each day's interaction episodes (staggered exposure) |
+| `order_lists: controlled` | blocks containing every dish once, shuffled per episode seed, repeated (`orders.make_controlled_sequence`) |
+| `eval_episodes: 2` | held-out episodes after each day and before day 1 (day 0): full menu, the same seeds every day, played on a frozen copy of the ego's memory, no learning from them |
+| `knowledge_probe: true` | after each day (and day 0), on the frozen memory: one multiple-choice question per library rule (`coop.probe2`) |
+| condition `feedback: specific` | the LLM partner's feedback at the end of each day, given to the ego's `end_day` (`coop.feedback`) |
+| condition `oracle: true` | the ego is told the card's "wants" lines up front |
+| `memory_source: {type: swap, from: memory_fb, donor: card \| seed}` | daily controls: at the start of each day, the file is replaced by the donor's file after the previous day (another card, same seed; or the same card, next seed). Placebo: same headings and length, neutral text. The run keeps its own notes and gets its own partner's feedback |
+
+**Ego memory** (`memory_mode`):
+- **`model_daily`:** after each interaction episode, a short note of joint evidence (≤ 60
+  words: what I did, what they did, what followed). The day's notes are shown in the rest of
+  that day. At the end of the day, one call rewrites the partner file from the old file, the
+  notes and (if given) the feedback. The file has four sections (Partner Preferences, Partner
+  Reactions, Cooperation Strategy, Uncertainties), with conditions, evidence tallies
+  (`+D1E2 / -D2E3`), sources, and "Follows from" for strategy lines. The word budgets are
+  80 / 60 / 60 / 40 per section. Trimming happens within a section, never across, and is logged
+  in `dayDD/consolidation.json`.
+- **`latest_feedback`:** no file; only the previous day's feedback is shown.
+
+**Conditions** (all with structured ToM):
+- `tom_struct`: no memory.
+- `memory`: daily file, no feedback.
+- `memory_fb`: daily file plus feedback.
+- `latest_fb`: only the last feedback.
+- `oracle`: the "wants" lines.
+- `swap_other`, `swap_same`, `placebo`: daily controls built from memory_fb.
+
+Conditions without memory across days (`tom_struct`, `oracle`, the reference) are
+evaluated once, on day 0, and the analysis uses that value for every day.
+
+**Feedback** (`coop.feedback`, LLM partner only):
+- **Input:** the partner model gets its card (backstory and the active rules' text), the day's
+  scores, and its own log of the day: its actions, the ego actions it saw, and public events,
+  up to 40 lines each per episode.
+- **Output:** it answers in at most 60 words in its own voice; it may ask for a change and must
+  not list its rules.
+- **Checks:** word count, plus rule recitation (8 consecutive words of a rule text, or a rule id).
+- **Storage:** `dayDD/feedback.json` holds the prompt and reply for a manual sample of
+  unsupported claims. It is generated once and read back on resume.
+
+**Knowledge probe** (`coop.probe2`): which station of each kind (when both are free), the
+solo dish, the split dish, which order, who serves, waiting for supplies, the hand-over side,
+the reaction to a takeover, the reaction to contention, and waiting for commitment. Rules the
+persona lacks have a "no preference / none / no" answer. Answers are scored separately for
+rules exposed so far (the partner had an opportunity in the ego's view), not yet exposed, and
+absent. The probe is a forked call: nothing enters memory.
+
+**Exposure**: `summary.json` → `rules[rule].exposure` counts the partner's opportunities
+in the ego's view (Chebyshev distance ≤ view radius).
+
+**Output per run:**
+- `dayDD/epEE/` (interaction);
+- `dayDD/evalEE/` (held-out; `summary.json` has `"kind": "eval"`);
+- `dayDD/feedback.json`;
+- `dayDD/consolidation.json`;
+- `dayDD/knowledge_probe.json`;
+- `day00/` (before day 1).
+
+**Learning curves** (`coop.learning OUT`):
+- held-out score minus the reference for days 0–5;
+- alignment and partner adherence on held-out episodes;
+- each condition minus `tom_struct` and minus `memory_fb`, paired over runs (per day, the
+  average over days 1–5, and per persona);
+- probe accuracy (exposed / not exposed / absent);
+- cumulative exposure per rule;
+- feedback checks, trimmed lines, and invalid replies and fallbacks for ego and partner.
+
+**Where this deviates from the plan:**
+- the day's notes are shown during that day;
+- episode notes are written by the ego model;
+- feedback exists only with the LLM partner;
+- the knowledge probe also runs on day 0;
+- the plan's example card p1 was contradictory and was changed.
+
+```bash
+bash scripts/run_qwen38_days.sh configs/coop/days_persona.yaml --conditions tom_struct memory memory_fb oracle swap_other --run-seeds 0 1 2 --out outputs/persona_pilot --workers 64
+```
+```bash
+python -m coop.learning outputs/persona_pilot --out outputs/persona_pilot/learning.json
+```
+
 ## Pooling seeds (`coop.analyze` with several folders)
 
 Folders of the same config run on different run seeds (e.g. a replication) can be

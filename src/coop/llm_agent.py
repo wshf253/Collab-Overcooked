@@ -67,7 +67,21 @@ HANDOVER_RULES = (
 
 
 TOM_MODES = ("free", "structured")
-MEMORY_MODES = ("notes", "model")
+MEMORY_MODES = ("notes", "model", "model_daily", "latest_feedback")
+# model_daily: one file about the partner, rewritten once a day (plan section 7).
+DAILY_SECTIONS = ("## Partner Preferences", "## Partner Reactions", "## Cooperation Strategy", "## Uncertainties")
+DAILY_BUDGETS = (80, 60, 60, 40)      # words per section; trimmed within a section, never across
+DAILY_FORMAT = """## Partner Preferences
+- When <condition>, <claim>. Evidence: +D1E2, +D2E1, -D2E3. Source: observed | feedback
+
+## Partner Reactions
+- When I <action>, they <response>. Evidence: ...
+
+## Cooperation Strategy
+- <what I do>. Follows from: <the entry above it follows from>
+
+## Uncertainties
+- <question>; what observation would settle it"""
 READ_FIELDS = ("doing", "order", "next", "habit")
 
 
@@ -79,6 +93,32 @@ def clean_read(raw: Any) -> Optional[Dict[str, str]]:
         return None
     out = {k: str(raw.get(k, "")).strip()[:200] for k in READ_FIELDS}
     return out if any(out.values()) else None
+
+
+def trim_sections(text: str, sections, budgets) -> Tuple[str, List[str]]:
+    """Keep each section's lines until its word budget (never moving words across
+    sections); a missing section gets an empty entry. Returns (text, trimmed lines)."""
+    found: Dict[str, List[str]] = {}
+    cur = None
+    for line in text.splitlines():
+        head = next((h for h in sections if line.strip().lower().startswith(h.lower())), None)
+        if head is not None:
+            cur = head
+            found.setdefault(cur, [])
+        elif cur is not None and line.strip():
+            found[cur].append(line.rstrip())
+    out, trimmed = [], []
+    for h, budget in zip(sections, budgets):
+        kept, n = [], 0
+        for line in found.get(h, []):
+            w = len(line.split())
+            if n + w > budget:
+                trimmed.append(f"{h[3:]}: {line}")
+                continue
+            kept.append(line)
+            n += w
+        out.append(h + "\n" + ("\n".join(kept) if kept else "- (nothing yet)"))
+    return "\n\n".join(out), trimmed
 
 
 def bound_words(text: str, limit: int) -> Tuple[str, bool]:
@@ -102,7 +142,8 @@ class LLMAgent(Agent):
                  probe: bool = True, max_memory_notes: int = 5, max_tokens: int = 300,
                  probe_max_tokens: int = 500, partner_log_lines: int = 15, retry_invalid: bool = True,
                  tom_mode: str = "free", memory_mode: str = "notes", model_words: int = 200,
-                 model_max_tokens: int = 1000):
+                 model_max_tokens: int = 1000, oracle_wants: Optional[List[str]] = None,
+                 note_words: int = 60, file_budgets: Optional[List[int]] = None):
         if tom_mode not in TOM_MODES or memory_mode not in MEMORY_MODES:
             raise ValueError(f"tom_mode must be one of {TOM_MODES}, memory_mode one of {MEMORY_MODES}")
         self.backend_spec = dict(backend)
@@ -110,6 +151,12 @@ class LLMAgent(Agent):
         self.tom, self.use_memory, self.probe = tom, memory, probe
         self.structured = tom and tom_mode == "structured"
         self.model_mode = memory and memory_mode == "model"
+        self.daily = memory and memory_mode == "model_daily"
+        self.latest_fb = memory and memory_mode == "latest_feedback"
+        self.oracle_wants = list(oracle_wants or [])
+        self.note_words = note_words
+        self.file_budgets = tuple(file_budgets or DAILY_BUDGETS)
+        self.day_log: Optional[Dict[str, Any]] = None
         self.tom_mode, self.memory_mode = tom_mode, memory_mode
         self.model_words, self.model_max_tokens = model_words, model_max_tokens
         self.max_memory_notes, self.max_tokens, self.probe_max_tokens = max_memory_notes, max_tokens, probe_max_tokens
@@ -192,6 +239,17 @@ class LLMAgent(Agent):
 
     def end_episode(self, result):
         self.memory["episodes_played"] = self.memory.get("episodes_played", 0) + 1
+        if self.daily or self.latest_fb:
+            # Day-structured memory: the old probe only if asked; the daily file grows from a
+            # short evidence note per episode and is rewritten once a day (end_day).
+            self.probe_answer = self._probe(result) if self.probe else None
+            if self.daily:
+                note = self._episode_note(result)
+                self.model_update = {k: v for k, v in note.items() if k != "text"}
+                if note["ok"]:
+                    self.memory.setdefault("day_notes", []).append(
+                        {"day": result["day"], "episode": result["episode"], "note": note["text"]})
+            return
         if not (self.probe or self.use_memory):
             return
         answer = self._probe(result) if (self.probe or not self.model_mode) else None
@@ -210,6 +268,17 @@ class LLMAgent(Agent):
             notes.append({"day": result["day"], "episode": result["episode"],
                           "profile": answer["partner_profile"], "notes": answer["notes"]})
             del notes[:-self.max_memory_notes]
+
+    def end_day(self, day, results, feedback=None):
+        """Daily memory: rewrite the partner file from the old file, today's notes and the
+        partner's feedback (model_daily), or keep only the feedback (latest_feedback)."""
+        self.day_log = None
+        if self.latest_fb:
+            self.memory["latest_feedback"] = {"day": day, "text": feedback} if feedback else None
+            self.day_log = {"day": day, "mode": "latest_feedback", "feedback": feedback}
+        elif self.daily:
+            self.day_log = self._consolidate(day, feedback)
+            self.memory["day_notes"] = []
 
     def episode_log(self):
         return {"condition": {"tom": self.tom, "memory": self.use_memory, "probe": self.probe,
@@ -315,10 +384,26 @@ class LLMAgent(Agent):
             parts.append("Before each action, write down your current read of your partner. Your previous "
                          "read is shown to you at the next decision: check it against what your partner did "
                          "since, and correct it.")
+        if self.oracle_wants:
+            parts.append("What your partner wants from you (you were told this in advance):\n"
+                         + "\n".join(f"- {w}" for w in self.oracle_wants))
         model = self.memory.get("partner_model") if self.model_mode else None
         if model:
             parts.append("You have worked with this same partner before. Your partner model (a file you "
                          "keep about this partner and rewrite after every episode):\n" + model)
+        if self.daily:
+            daily_file = self.memory.get("partner_model")
+            if daily_file:
+                parts.append("You have worked with this same partner on earlier days. Your partner file "
+                             "(you keep it about this partner and rewrite it at the end of each day):\n"
+                             + daily_file)
+            today = self.memory.get("day_notes") or []
+            if today:
+                parts.append("Your notes from earlier episodes today:\n" + "\n".join(
+                    f"- episode {n['episode']}: {n['note']}" for n in today))
+        if self.latest_fb and self.memory.get("latest_feedback"):
+            fb = self.memory["latest_feedback"]
+            parts.append(f"At the end of day {fb['day']}, your partner told you: \"{fb['text']}\"")
         notes = self.memory.get("notes") if self.use_memory and not self.model_mode else None
         if notes:
             lines = []
@@ -494,6 +579,85 @@ class LLMAgent(Agent):
                 "stage_shares": clean_shares(parsed.get("stage_shares")),
                 "notes": notes if isinstance(notes, str) else ""}
 
+
+    # ------------------------------------------------------------------ #
+    # Daily memory (memory_mode model_daily)
+    # ------------------------------------------------------------------ #
+    def _episode_text(self) -> str:
+        mine = "\n".join(f"t={t}: {a} -> {r}" for t, a, r in self.own_log[-40:]) or "(none)"
+        theirs = "\n".join(f"t={t}: {a}" for t, a in self.partner_log[-40:]) or "(none)"
+        events = "\n".join(self.events[-20:]) or "(none)"
+        seen = "that you saw" if self.belief is not None else "completed"
+        return (f"Your actions (time step: action -> result):\n{mine}\n"
+                f"Your partner's actions {seen} (time step: action):\n{theirs}\nEvents:\n{events}\n")
+
+    def _episode_note(self, result) -> Dict[str, Any]:
+        user = (
+            "EPISODE_NOTE\n"
+            f"The episode is over (day {result['day']}, episode {result['episode']}). Team score "
+            f"{result['score']:+g}, orders completed {result['orders_completed']}.\n" + self._episode_text()
+            + f"\nWrite a short note of joint evidence about your partner: what you did, what they did, and "
+            f"what followed (for example: when you took an order or a station, what they did next). At most "
+            f"{self.note_words} words. Keep to what happened; you will use these notes at the end of the day.\n"
+            'Reply with JSON only: {"note": "<your note>"}')
+        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
+        parsed, text = self._chat("note", self.context["horizon"], messages, self.probe_max_tokens)
+        note = parsed.get("note") if isinstance(parsed, dict) else None
+        if not isinstance(note, str) or not note.strip():
+            return {"ok": False, "reason": "no note in the reply"}
+        words = note.split()
+        return {"ok": True, "text": " ".join(words[:int(self.note_words * 1.5)]), "words": len(words)}
+
+    def _consolidate(self, day: int, feedback: Optional[str]) -> Dict[str, Any]:
+        old = self.memory.get("partner_model")
+        notes = self.memory.get("day_notes") or []
+        budgets = ", ".join(f"{h[3:]} {b}" for h, b in zip(DAILY_SECTIONS, self.file_budgets))
+        user = (
+            "PARTNER_FILE_UPDATE\n"
+            f"Day {day} is over. Rewrite your partner file from your old file, today's notes"
+            + (" and what your partner told you" if feedback else "") + ".\n\n"
+            "YOUR PARTNER FILE SO FAR:\n" + (old or "(none yet: this was your first day with this partner)")
+            + "\n\nYOUR NOTES FROM TODAY:\n" + ("\n".join(f"- episode {n['episode']}: {n['note']}" for n in notes)
+                                                or "(none)")
+            + ("\n\nWHAT YOUR PARTNER TOLD YOU AT THE END OF THE DAY:\n" + feedback if feedback else "")
+            + "\n\nWrite each preference and reaction with its condition (when ... ) and an evidence tally: "
+            "+DxEy for an episode that supports it, -DxEy for one that contradicts it; say whether it was "
+            "observed or comes from your partner's feedback. Every strategy line must say which entry it "
+            "follows from. Keep what still holds, correct what was contradicted, drop what has no support. "
+            f"Use exactly this format and these sections:\n{DAILY_FORMAT}\n"
+            f"Word budget per section: {budgets}. This file is all you will remember about your partner.\n"
+            'Reply with JSON only: {"partner_file": "<the whole file as one markdown string>"}')
+        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
+        parsed, text = self._chat("consolidate", self.context["horizon"], messages, self.model_max_tokens)
+        log: Dict[str, Any] = {"day": day, "feedback": feedback, "notes": notes, "old_file": old,
+                               "prompt": user, "reply": text}
+        raw = parsed.get("partner_file") if isinstance(parsed, dict) else None
+        if isinstance(raw, dict):
+            raw = "\n\n".join(f"{k if str(k).startswith('#') else '## ' + str(k)}\n" +
+                               ("\n".join(f"- {x}" for x in v) if isinstance(v, list) else str(v))
+                               for k, v in raw.items())
+        if not isinstance(raw, str) or not raw.strip():
+            log.update(ok=False, reason="no partner_file in the reply")
+            return log
+        new, trimmed = trim_sections(raw.strip(), DAILY_SECTIONS, self.file_budgets)
+        self.memory["partner_model"] = new
+        self.memory["model_updates"] = self.memory.get("model_updates", 0) + 1
+        log.update(ok=True, file=new, trimmed=trimmed, words=len(new.split()))
+        return log
+
+    def knowledge_probe(self, questions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Forked call on the current memory: answers never enter memory or later prompts."""
+        self.system = self._system_prompt()          # the current memory (e.g. after consolidation)
+        lines = [f'{q["id"]}: {q["text"]} Options: ' + " | ".join(f'"{o}"' for o in q["options"]) for q in questions]
+        user = ("KNOWLEDGE_PROBE\nAnswer from what you know about your partner. For each question choose one "
+                "option, exactly as written.\n" + "\n".join(lines) +
+                '\nReply with JSON only: {"answers": {"<question id>": "<option>", ...}}')
+        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user}]
+        r = self.backend.chat(messages, max_tokens=self.probe_max_tokens + 20 * len(questions), seed=self._seed())
+        parsed = parse_json(r.text)
+        answers = (parsed or {}).get("answers") if isinstance(parsed, dict) else None
+        return {"answers": answers if isinstance(answers, dict) else {}, "prompt": user, "reply": r.text,
+                "error": r.error}
 
     def _update_model(self, result) -> Dict[str, Any]:
         """Rewrite the partner-model file from this episode (memory_mode "model")."""

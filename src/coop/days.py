@@ -69,14 +69,20 @@ from . import rule_partner  # noqa: F401  (registers the "rule_ego" agent type)
 from .llm_partner import LLMPartner, LLMPartnerPlayer
 from .rule_eval import RuleEvaluator, intent_target
 from .rule_partner import RulePlayer
-from .rules import NEUTRAL, load_cards, load_library
+from .rules import NEUTRAL, load_cards, load_library, render
+from . import feedback as day_feedback_mod
+from . import probe2
 
 REFERENCE = "_reference"
 CONFIG_KEYS = {
     "name", "layout", "menu", "horizon", "wrong_delivery_penalty", "no_repeat", "days",
     "episodes_per_day", "ego_index", "personas", "custom_personas", "run_seeds", "agent",
     "conditions", "reference_agent", "open_orders", "view_radius", "partner",
+    "schedule", "order_lists", "eval_episodes", "knowledge_probe",
 }
+# Condition keys the runner handles (not passed to the agent).
+RUNNER_KEYS = ("memory_source", "feedback", "oracle")
+FEEDBACK_LEVELS = ("none", "specific")
 PARTNER_TYPES = ("scripted", "rule", "llm")
 
 
@@ -109,6 +115,11 @@ class DaysConfig:
     # complexity: K, remind: bool, enforce: bool, backend: {...}, max_tokens: n}: personas
     # are card names (or "neutral") played by the rule-based twin or the LLM persona partner.
     partner: Optional[Dict[str, Any]] = None
+    # Day structure (plan sections 6-9); the defaults keep the old behaviour.
+    schedule: Optional[Dict[Any, Any]] = None   # day -> dishes of that day's interaction episodes, or "all"
+    order_lists: str = "random"                 # random | controlled (blocks with every dish once)
+    eval_episodes: int = 0                      # held-out episodes on frozen memory: day 0 and after each day
+    knowledge_probe: bool = False               # one multiple-choice question per library rule, per day
 
     def __post_init__(self):
         if self.days < 1 or self.episodes_per_day < 1 or self.horizon < 1:
@@ -153,8 +164,24 @@ class DaysConfig:
         unknown = sorted(set(menu) - set(mdp.Recipe.recipe_list))
         if unknown:
             raise ValueError(f"Orders not producible in layout '{self.layout}': {unknown}")
+        if self.order_lists not in ("random", "controlled"):
+            raise ValueError("order_lists must be 'random' or 'controlled'")
+        if self.eval_episodes < 0:
+            raise ValueError("eval_episodes must be >= 0")
+        for day in range(1, self.days + 1):
+            unknown = sorted(set(self.menu_for(day)) - set(mdp.Recipe.recipe_list))
+            if unknown:
+                raise ValueError(f"schedule day {day}: orders not producible in '{self.layout}': {unknown}")
         if not self.conditions:
             raise ValueError("conditions must name at least one condition")
+        for name in self.conditions:
+            run = self.condition_runner(name)
+            if run.get("feedback", "none") not in FEEDBACK_LEVELS:
+                raise ValueError(f"condition {name!r}: feedback must be one of {FEEDBACK_LEVELS}")
+            if run.get("feedback", "none") != "none" and self.partner_type() != "llm":
+                raise ValueError(f"condition {name!r}: daily feedback comes from the LLM partner (partner.type llm)")
+            if run.get("oracle") and self.partner_type() == "scripted":
+                raise ValueError(f"condition {name!r}: oracle needs persona cards")
         for name in self.conditions:
             if not name or name.startswith("_") or "/" in name:
                 raise ValueError(f"bad condition name {name!r}")
@@ -168,6 +195,10 @@ class DaysConfig:
                 continue
             if src.get("type") not in ("swap", "placebo"):
                 raise ValueError(f"condition {name!r}: memory_source type must be 'swap' or 'placebo'")
+            if src.get("donor", "card") not in ("card", "seed"):
+                raise ValueError(f"condition {name!r}: memory_source donor must be 'card' or 'seed'")
+            if src.get("donor") == "seed" and len(self.run_seeds) < 2:
+                raise ValueError(f"condition {name!r}: a donor seed needs at least two run_seeds")
             origin = src.get("from")
             if origin not in self.conditions or origin == name or self.memory_source(origin):
                 raise ValueError(f"condition {name!r}: memory_source.from must name another condition "
@@ -176,7 +207,7 @@ class DaysConfig:
                 raise ValueError(f"condition {name!r}: the source condition {origin!r} keeps no memory")
             if not self.condition_agent(name).get("memory"):
                 raise ValueError(f"condition {name!r}: set memory: true so the given notes are shown")
-            if src["type"] == "swap":
+            if src["type"] == "swap" and src.get("donor", "card") == "card":
                 donors = self.donors(name)
                 for p in self.personas:
                     if donors.get(p) not in self.personas or donors[p] == p:
@@ -203,13 +234,27 @@ class DaysConfig:
             return copy.deepcopy(self.reference_agent)
         spec = copy.deepcopy(self.agent)
         for key, value in (self.conditions[name] or {}).items():
-            if key == "memory_source":
+            if key in RUNNER_KEYS:
                 continue
             if isinstance(value, dict) and isinstance(spec.get(key), dict):
                 spec[key] = {**spec[key], **value}
             else:
                 spec[key] = copy.deepcopy(value)
         return spec
+
+    def condition_runner(self, name: str) -> Dict[str, Any]:
+        """The runner's keys of a condition (memory_source, feedback, oracle)."""
+        if name == REFERENCE:
+            return {}
+        return {k: v for k, v in (self.conditions.get(name) or {}).items() if k in RUNNER_KEYS}
+
+    def menu_for(self, day: int) -> List[str]:
+        """Dishes of a day's interaction episodes (schedule), else the whole menu."""
+        full = list(normalize_menu(self.menu))
+        if not self.schedule:
+            return full
+        dishes = self.schedule.get(day, self.schedule.get(str(day), "all"))
+        return full if dishes in ("all", None) else list(dishes)
 
     def memory_source(self, name: str) -> Optional[Dict[str, Any]]:
         """Control conditions: memory taken from another condition's runs, not from this run."""
@@ -279,23 +324,30 @@ def _jsonable_action(a):
 
 
 def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day: int,
-                 episode: int, ep_dir: Path) -> Dict[str, Any]:
-    seed = episode_seed(run_seed, day, episode)
+                 episode: int, ep_dir: Path, kind: str = "interaction") -> Dict[str, Any]:
+    """One episode. ``kind="eval"``: a held-out episode (plan 6): the same seed every day,
+    the whole menu, and the agent does not learn from it (no end_episode)."""
+    if kind == "eval":
+        seed = episode_seed(run_seed, 0, 100 + episode)
+        menu = cfg.menu
+    else:
+        seed = episode_seed(run_seed, day, episode)
+        menu = cfg.menu_for(day) if cfg.schedule else cfg.menu
     ego, other = cfg.ego_index, 1 - cfg.ego_index
-    env = ContinuousOrderEnv(cfg.menu, layout=cfg.layout, horizon=cfg.horizon,
+    env = ContinuousOrderEnv(menu, layout=cfg.layout, horizon=cfg.horizon,
                              wrong_delivery_penalty=cfg.wrong_delivery_penalty, no_repeat=cfg.no_repeat,
-                             open_orders=cfg.open_orders)
+                             open_orders=cfg.open_orders, order_mode=cfg.order_lists)
     start = env.reset(seed)
     context = {"day": day, "episode": episode, "episode_seed": seed, "layout": cfg.layout,
-               "horizon": cfg.horizon, "menu": normalize_menu(cfg.menu), "index": ego,
+               "horizon": cfg.horizon, "menu": normalize_menu(menu), "index": ego,
                "partner_index": other, "wrong_delivery_penalty": cfg.wrong_delivery_penalty,
                "open_orders": cfg.open_orders, "view_radius": cfg.view_radius}
     partner, rules, traits = make_partner(cfg, persona, context)
     partner.reset(env.mdp, other, seed, view_radius=cfg.view_radius)    # same view rules for everyone
     evaluator = None
     if rules is not None:
-        evaluator = RuleEvaluator(rules, load_library(), Kitchen(env.mdp, ego, start), normalize_menu(cfg.menu),
-                                  ego, other, cfg.open_orders, env.mdp)
+        evaluator = RuleEvaluator(rules, load_library(), Kitchen(env.mdp, ego, start), normalize_menu(menu),
+                                  ego, other, cfg.open_orders, env.mdp, view_radius=cfg.view_radius)
     agent.begin_episode(env.mdp, ego, context)
     ep_dir.mkdir(parents=True, exist_ok=True)
     with open(ep_dir / "steps.jsonl", "w") as steps:
@@ -325,10 +377,13 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
             }) + "\n")
     summary = dict(env.summary(), day=day, episode=episode, run_seed=run_seed, persona=persona,
                    ego_index=ego)
+    if kind != "interaction":
+        summary["kind"] = kind
     # The ego learns from what happened in the kitchen, never from the partner's
     # persona, traits or true jobs.
     public = {k: v for k, v in summary.items() if k != "persona"}
-    agent.end_episode(dict(public, context=context))
+    if kind == "interaction":
+        agent.end_episode(dict(public, context=context))
     agent_log = agent.episode_log()
     probe = agent_log.get("probe") if isinstance(agent_log, dict) else None
     psummary = partner.summary()
@@ -389,10 +444,23 @@ def make_partner(cfg: DaysConfig, persona: str, context: Dict[str, Any]):
     return LLMPartnerPlayer(agent, ctx), rules, None
 
 
+def oracle_kitchen(cfg: DaysConfig) -> Kitchen:
+    """The layout's kitchen from the ego's slot (for rendering rule texts)."""
+    env = ContinuousOrderEnv(cfg.menu, layout=cfg.layout, open_orders=cfg.open_orders)
+    with contextlib.redirect_stdout(io.StringIO()):
+        start = env.reset(0)
+    return Kitchen(env.mdp, cfg.ego_index, start)
+
+
 def resolve_agent_spec(cfg: DaysConfig, condition: str, persona: str) -> Dict[str, Any]:
     """The ego spec for one run. A ``rule_ego`` gets the rules of its card: ``align: own``
     (this persona's card), ``other`` (the next persona's card, or ``card: <name>``)."""
     spec = cfg.condition_agent(condition)
+    if cfg.condition_runner(condition).get("oracle"):
+        # The one exception to "the ego never sees the card": what the partner wants from it.
+        card = cfg.cards()[persona]
+        lib = load_library()
+        spec["oracle_wants"] = [render(r, "wants", lib, oracle_kitchen(cfg)) for r in card.active(cfg.partner.get("complexity"))]
     if spec.get("type") != "rule_ego":
         return spec
     align = spec.get("align", "own")
@@ -449,14 +517,15 @@ def placebo_text(length: int, open_orders: int = 1) -> str:
     return cut.rsplit(" ", 1)[0] if " " in cut and len(out) > length else cut
 
 
-def placebo_model(model: str, open_orders: int = 1) -> str:
+def placebo_model(model: str, open_orders: int = 1, sections=None) -> str:
     """A partner-model file with the same headings and about the same length, holding
     neutral kitchen facts instead of anything about the partner."""
+    sections = tuple(sections or MODEL_SECTIONS)
     base = placebo_sentences(open_orders)
-    body = max(len(model) - sum(len(h) + 2 for h in MODEL_SECTIONS), 3 * len(base[0]))
+    body = max(len(model) - sum(len(h) + 2 for h in sections), 3 * len(base[0]))
     sentences = [s if s.endswith(".") else s + "." for s in re.split(r"(?<=\.) ", placebo_text(body, open_orders)) if s]
-    parts = [sentences[i::len(MODEL_SECTIONS)] or [base[i]] for i in range(len(MODEL_SECTIONS))]
-    return "\n\n".join(h + "\n" + "\n".join(f"- {s}" for s in p) for h, p in zip(MODEL_SECTIONS, parts))
+    parts = [sentences[i::len(sections)] or [base[i % len(base)]] for i in range(len(sections))]
+    return "\n\n".join(h + "\n" + "\n".join(f"- {s}" for s in p) for h, p in zip(sections, parts))
 
 
 def _previous(cfg: DaysConfig, day: int, ep: int) -> Optional[tuple]:
@@ -477,14 +546,36 @@ def given_memory(cfg: DaysConfig, out: Path, condition: str, persona: str, run_s
              replaced by neutral text of the same length, and with no profile.
     """
     src = cfg.memory_source(condition)
-    prev = _previous(cfg, day, ep)
+    daily = cfg.condition_agent(src["from"]).get("memory_mode") == "model_daily"
+    if daily:
+        # Daily file: replaced at the start of each day with the donor's file after the
+        # previous day; the run keeps its own notes and receives its own partner's feedback.
+        if ep != 1:
+            return {}
+        prev = (day - 1, cfg.episodes_per_day) if day > 1 else None
+    else:
+        prev = _previous(cfg, day, ep)
     if prev is None:
-        return {"notes": [], "partner_model": None, "memory_source": src["type"]}
-    donor = cfg.donors(condition)[persona] if src["type"] == "swap" else persona
-    path = ep_dir_for(run_dir_for(out, src["from"], donor, run_seed), *prev) / "memory_after.json"
+        return {"partner_model": None, "memory_source": src["type"]} if daily else \
+            {"notes": [], "partner_model": None, "memory_source": src["type"]}
+    donor, donor_seed = persona, run_seed
+    if src["type"] == "swap":
+        if src.get("donor", "card") == "seed":
+            seeds = cfg.run_seeds
+            donor_seed = seeds[(seeds.index(run_seed) + 1) % len(seeds)]
+        else:
+            donor = cfg.donors(condition)[persona]
+    path = ep_dir_for(run_dir_for(out, src["from"], donor, donor_seed), *prev) / "memory_after.json"
     if not path.exists():
         raise FileNotFoundError(f"{condition}: needs {path} (run the source condition first)")
     source = json.loads(path.read_text())
+    if daily:
+        model = source.get("partner_model")
+        if src["type"] == "placebo" and model:
+            from .llm_agent import DAILY_SECTIONS
+            model = placebo_model(model, cfg.open_orders, DAILY_SECTIONS)
+        return {"partner_model": model, "memory_source": src["type"],
+                "source": {"condition": src["from"], "persona": donor, "seed": donor_seed, "after": list(prev)}}
     notes = source.get("notes") or []
     model = source.get("partner_model")
     if src["type"] == "placebo":
@@ -500,21 +591,71 @@ def _done(ep_dir: Path) -> bool:
     return (ep_dir / "summary.json").exists() and (ep_dir / "memory_after.json").exists()
 
 
+def eval_dir_for(run_dir: Path, day: int, episode: int) -> Path:
+    return run_dir / f"day{day:02d}" / f"eval{episode:02d}"
+
+
 def run_one(cfg_dict: Dict[str, Any], out: str, condition: str, persona: str, run_seed: int,
             quiet: bool = True) -> Dict[str, Any]:
-    """Play (or resume) every episode of one run. Picklable entry point for workers."""
+    """Play (or resume) every episode of one run. Picklable entry point for workers.
+
+    With ``eval_episodes`` / ``knowledge_probe``: held-out episodes and the knowledge probe on
+    a frozen copy of the ego's memory before day 1 (day 0) and after each day's end. With a
+    condition's ``feedback``: the partner's day feedback, given to ``agent.end_day``.
+    Feedback, consolidation, probe and evaluation are each written once and read back on
+    resume.
+    """
     cfg = DaysConfig(**cfg_dict)
     run_dir = run_dir_for(Path(out), condition, persona, run_seed)
     run_dir.mkdir(parents=True, exist_ok=True)
     episodes: List[Dict[str, Any]] = []
+    evals: List[Dict[str, Any]] = []
     resumed = 0
+    sink = (lambda: io.StringIO()) if quiet else (lambda: sys.stdout)
     try:
-        agent = make_agent(resolve_agent_spec(cfg, condition, persona))
+        spec = resolve_agent_spec(cfg, condition, persona)
+        runner = cfg.condition_runner(condition)
+        fb_level = runner.get("feedback", "none")
+        agent = make_agent(spec)
         agent.set_memory({})
+        # Does the ego's memory change across days? If not, held-out results are the same
+        # every day: evaluate once (day 0).
+        cross_day = bool(spec.get("memory")) or fb_level != "none"
+        exposure: Dict[str, int] = {}
+
+        def evaluate(day: int) -> None:
+            if day > 0 and not cross_day:
+                return
+            snap = agent.get_memory()
+            for e in range(1, cfg.eval_episodes + 1):
+                d = eval_dir_for(run_dir, day, e)
+                if (d / "summary.json").exists():
+                    evals.append(_metrics(json.loads((d / "summary.json").read_text())))
+                    continue
+                if d.exists():
+                    shutil.rmtree(d)
+                agent.set_memory(snap)
+                with contextlib.redirect_stdout(sink()):
+                    summary = play_episode(cfg, agent, persona, run_seed, day, e, d, kind="eval")
+                evals.append(_metrics(summary))
+            agent.set_memory(snap)
+            probe_path = run_dir / f"day{day:02d}" / "knowledge_probe.json"
+            if cfg.knowledge_probe and hasattr(agent, "knowledge_probe") and not probe_path.exists() \
+                    and getattr(agent, "kitchen", None) is not None and cfg.partner_type() != "scripted":
+                card = cfg.cards()[persona]
+                rules = card.active(cfg.partner.get("complexity"))
+                res = probe2.run(agent, cfg, rules, dict(exposure))
+                probe_path.parent.mkdir(parents=True, exist_ok=True)
+                probe_path.write_text(json.dumps(dict(res, day=day), indent=1))
+            agent.set_memory(snap)
+
+        if cfg.eval_episodes or cfg.knowledge_probe:
+            evaluate(0)
         for day in range(1, cfg.days + 1):
             day_results = []
             for ep in range(1, cfg.episodes_per_day + 1):
                 ep_dir = ep_dir_for(run_dir, day, ep)
+                last = ep == cfg.episodes_per_day
                 if _done(ep_dir):
                     summary = json.loads((ep_dir / "summary.json").read_text())
                     agent.set_memory(json.loads((ep_dir / "memory_after.json").read_text()))
@@ -522,18 +663,35 @@ def run_one(cfg_dict: Dict[str, Any], out: str, condition: str, persona: str, ru
                 else:
                     if ep_dir.exists():
                         shutil.rmtree(ep_dir)        # partial episode from an interrupted run
+                    if last:
+                        for name in ("feedback.json", "consolidation.json"):
+                            (run_dir / f"day{day:02d}" / name).unlink(missing_ok=True)
                     if cfg.memory_source(condition):
                         # Control: the memory comes from another run, not from this run's own notes.
                         given = given_memory(cfg, Path(out), condition, persona, run_seed, day, ep)
-                        agent.set_memory(dict(agent.get_memory(), **given))
-                    sink = io.StringIO() if quiet else sys.stdout
-                    with contextlib.redirect_stdout(sink):  # the legacy MDP prints every step
+                        if given:
+                            agent.set_memory(dict(agent.get_memory(), **given))
+                    with contextlib.redirect_stdout(sink()):  # the legacy MDP prints every step
                         summary = play_episode(cfg, agent, persona, run_seed, day, ep, ep_dir)
-                    if ep == cfg.episodes_per_day:
-                        agent.end_day(day, day_results + [summary])
+                    if last:
+                        feedback = None
+                        if fb_level != "none":
+                            feedback = day_feedback_mod.for_day(cfg, persona, run_dir, day, run_seed)
+                        if feedback is None:
+                            agent.end_day(day, day_results + [summary])
+                        else:
+                            agent.end_day(day, day_results + [summary], feedback=feedback["text"])
+                        log = getattr(agent, "day_log", None)
+                        if log:
+                            (run_dir / f"day{day:02d}" / "consolidation.json").write_text(
+                                json.dumps(log, indent=1, default=str))
                     (ep_dir / "memory_after.json").write_text(json.dumps(agent.get_memory()))
+                for rule, row in (summary.get("rules") or {}).items():
+                    exposure[rule] = exposure.get(rule, 0) + row.get("exposure", 0)
                 day_results.append(summary)
                 episodes.append(_metrics(summary))
+            if cfg.eval_episodes or cfg.knowledge_probe:
+                evaluate(day)
         status = "ok"
         (run_dir / "error.log").unlink(missing_ok=True)
     except Exception:
@@ -541,6 +699,8 @@ def run_one(cfg_dict: Dict[str, Any], out: str, condition: str, persona: str, ru
         (run_dir / "error.log").write_text(traceback.format_exc())
     record = {"condition": condition, "persona": persona, "run_seed": run_seed, "status": status,
               "episodes_resumed": resumed, "episodes": episodes}
+    if evals:
+        record["eval_episodes"] = evals
     (run_dir / "run.json").write_text(json.dumps(record, indent=1))
     return record
 

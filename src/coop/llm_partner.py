@@ -232,4 +232,7 @@ class LLMPartnerPlayer:
     def log(self) -> Dict[str, Any]:
         """Partner-side record (saved next to the episode, never shown to the ego)."""
         a = self.agent
-        return {"system_prompt": a.system, "calls": a.calls, "decisions": a.decisions, "reminders": a.reminder_log}
+        return {"system_prompt": a.system, "calls": a.calls, "decisions": a.decisions, "reminders": a.reminder_log,
+                # its own record of the episode (for the day's feedback): what it did, what it saw
+                "own_actions": [list(x) for x in a.own_log], "seen_partner_actions": [list(x) for x in a.partner_log],
+                "events": list(a.events), "score": a.score}

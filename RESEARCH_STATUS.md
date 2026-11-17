@@ -241,6 +241,19 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.14 Multi-day learning setup: built, not yet run (plan sections 6–11, 2026-11-17)
+Built:
+- day schedule and controlled order lists;
+- held-out evaluation on frozen memory (days 0–5);
+- daily partner file (`model_daily`) and `latest_feedback`;
+- the partner's daily feedback;
+- the knowledge probe and exposure;
+- `oracle`, and the daily swap / swap-same / placebo controls;
+- `coop.learning` (curves and contrasts).
+
+Config: `configs/coop/days_persona.yaml` (8 conditions). Plan dates and stop points are not
+binding (user, 2026-11-17); deviations are listed in `docs/coop-setting.md`.
+
 ### 3.13 LLM persona partner: built, gates not yet run (plan v2, work packages 1–2, 2026-11-17)
 Built: rule library (10 rules), 4 pilot cards + neutral, predicates, rule-based twin, LLM persona
 partner (intention state, reminders), runner integration, rule egos, gate tools, tests
@@ -482,8 +495,10 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
    "order habits" table in `coop.analyze`). Still to run: the value screen with 16+ seeds, then
    `configs/coop/days_llm_orders.yaml` (`open2_env`, 2 open orders, radius 2, all controls).
 3. **A second model**, to check generality.
-0. **Current plan: `docs/PERSONA_PARTNER_PLAN_v2.md`.** Work packages 1–2 are built (§3.13); next
-   are Gates 1 and 2 with Qwen as partner, then stop and report.
+0. **Design reference: `docs/PERSONA_PARTNER_PLAN_v2.md`** (dates and stop points not binding).
+   Built: the persona partner and gate tools (§3.13), and the multi-day learning setup (§3.14).
+   Next: Gate 1 (partner usable?) with Qwen as partner, then the pilot with
+   `configs/coop/days_persona.yaml`.
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated

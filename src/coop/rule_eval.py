@@ -71,6 +71,7 @@ class Judgment:
     side: str          # partner (adherent) | ego (aligned)
     value: bool
     note: str = ""
+    seen: bool = True  # partner side: the partner was within the ego's view (exposure)
 
 
 class KitchenInfo:
@@ -854,8 +855,10 @@ def make_checks(rules: List[Rule], library, kitchen) -> List[Check]:
 class RuleEvaluator:
     """Adherence (partner) and alignment (ego) per rule over one episode, on the full state."""
 
-    def __init__(self, rules: List[Rule], library, kitchen, menu, ego: int, partner: int, n_open: int, mdp):
+    def __init__(self, rules: List[Rule], library, kitchen, menu, ego: int, partner: int, n_open: int, mdp,
+                 view_radius: Optional[int] = None):
         self.rules = rules
+        self.ego, self.partner, self.view_radius = ego, partner, view_radius
         self.tracker = Tracker(kitchen, menu, {ego: "ego", partner: "partner"}, n_open)
         self.checks = make_checks(rules, library, kitchen)
         self.jobs = {"partner": JobView(mdp, partner), "ego": JobView(mdp, ego)}
@@ -869,6 +872,12 @@ class RuleEvaluator:
         out: List[Judgment] = []
         for c in self.checks:
             out += c.judge(ctx)
+        if self.view_radius is not None:
+            a, b = pre.players[self.ego].position, pre.players[self.partner].position
+            seen = max(abs(a[0] - b[0]), abs(a[1] - b[1])) <= self.view_radius
+            for j in out:
+                if j.side == "partner":
+                    j.seen = seen
         # Takeovers are part of the shared memory (the partner reacts to them).
         for ev in events:
             if is_takeover(ev, self.tracker, pre, self.rules) and ev.dishes:
@@ -886,6 +895,8 @@ class RuleEvaluator:
                 js = [j for j in self.judgments if j.rule == lab and j.side == side]
                 rows[side] = {"opportunities": len(js), key: sum(j.value for j in js),
                               "rate": (sum(j.value for j in js) / len(js)) if js else None}
+            # Exposure: the partner's opportunities that happened within the ego's view.
+            rows["exposure"] = sum(1 for j in self.judgments if j.rule == lab and j.side == "partner" and j.seen)
             out[lab] = rows
         return out
 
