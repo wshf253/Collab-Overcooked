@@ -791,8 +791,11 @@ def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print,
     if cfg_path.exists():
         old = json.loads(cfg_path.read_text())
         new = json.loads(json.dumps(cfg_dict))
-        for key in [k for k in new if k not in old and new[k] is None]:
-            del new[key]        # keys added later with their default (e.g. partner: null) are the same config
+        # Keys added to DaysConfig after the folder was started, still at their default value
+        # (e.g. partner: null, order_lists: random, eval_episodes: 0), are the same config.
+        defaults = json.loads(json.dumps(asdict(DaysConfig())))
+        for key in [k for k in new if k not in old and new[k] == defaults.get(k)]:
+            del new[key]
         if old != new:
             raise ValueError(f"{cfg_path} holds a different config; use a new --out to start over")
     else:
