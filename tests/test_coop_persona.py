@@ -231,10 +231,38 @@ class LLMPartnerTests(unittest.TestCase):
         quiet(run_all, cfg, self.tmp / "g2out", 4)
         rep2 = gate2(self.tmp / "g2out")
         self.assertIn("aligned-generic:score", rep2["tables"]["pooled"]["diffs"])
-        self.assertIn("Gate 2", format_gate2(rep2))
+        self.assertNotIn("aligned-uninformed:score", rep2["tables"]["pooled"]["diffs"])   # twin screen only
+        text2 = format_gate2(rep2)
+        self.assertIn("Gate 2", text2)
+        self.assertLess(text2.index("score (primary)"), text2.index("alignment (secondary)"))
         misaligned = json.loads(next((self.tmp / "g2out" / "runs" / "misaligned" / "p1").glob(
             "seed0/day01/ep01/agent_log.json")).read_text())
         self.assertEqual(misaligned["card"], "p2")
+
+
+class ScoreValueScreenTests(unittest.TestCase):
+    def test_card_screen_has_the_uninformed_ego(self):
+        from coop.voi import card_screen
+        res = card_screen(CARDS, "open2_env", [0], 60, DEFAULT_MENU, view_radius=2, open_orders=2)
+        t = res["tables"]["selection"]
+        self.assertEqual(t["egos"], ["aligned", "generic", "misaligned", "uninformed"])
+        self.assertIn("aligned-uninformed:score", t["diffs"])
+        self.assertIn("score headroom over uninformed", format_gate2(res))
+
+    def test_rule_screen(self):
+        from coop.voi import format_rule_screen, rule_screen, rule_variants
+        variants = rule_variants("open2_env", list(DEFAULT_MENU))
+        labels = [str(v[0]) for v in variants]
+        self.assertEqual(len(variants), len(set(labels)))
+        own = [v for v in variants if isinstance(v[0], dict) and "own_station" in v[0]]
+        self.assertTrue(own and all(v[1]["own_station"]["station"][:-1] == v[0]["own_station"]["station"][:-1]
+                                    for v in own))                    # opposite: the other station of that kind
+        self.assertIn(("waits_for_commit", None), variants)
+        res = rule_screen("open2_env", [0, 1], 40, DEFAULT_MENU, 2, 2)
+        self.assertEqual(len(res["rows"]), len(variants))
+        row = next(r for r in res["rows"] if r["rule"] == "serves(who=ego)")
+        self.assertIn("aligned-opposite", row)
+        self.assertIn("aligned-uninformed", format_rule_screen(res))
 
 
 if __name__ == "__main__":

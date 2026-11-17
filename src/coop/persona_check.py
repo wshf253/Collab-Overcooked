@@ -236,6 +236,7 @@ def format_gate1(rep: Dict[str, Any], twin: Optional[Dict[str, Any]] = None) -> 
 # Gate 2
 # ---------------------------------------------------------------------- #
 EGOS = ("aligned", "generic", "misaligned")
+EXTRA_EGOS = ("uninformed",)     # twin screen only (coop.voi --cards)
 
 
 def gate2_rows(eps: List[Dict[str, Any]]) -> Dict[Tuple[str, str, int], Dict[str, Optional[float]]]:
@@ -256,12 +257,14 @@ def gate2_rows(eps: List[Dict[str, Any]]) -> Dict[Tuple[str, str, int], Dict[str
 def gate2_table(rows, seeds: Optional[List[int]] = None) -> Dict[str, Any]:
     cards = sorted({c for _, c, _ in rows})
     out: Dict[str, Any] = {"means": {}, "diffs": {}}
-    for ego in EGOS:
+    egos = [e for e in EGOS + EXTRA_EGOS if any(g == e for g, _, _ in rows)]
+    out["egos"] = egos
+    for ego in egos:
         for m in ("score", "alignment"):
             vals = [r[m] for (g, c, s), r in rows.items() if g == ego and (seeds is None or s in seeds)
                     and r.get(m) is not None]
             out["means"][f"{ego}:{m}"] = _mean_se(vals)
-    for other in ("generic", "misaligned"):
+    for other in [e for e in egos if e != "aligned"]:
         for m in ("score", "alignment"):
             d, per = [], defaultdict(list)
             for (g, c, s), r in rows.items():
@@ -288,16 +291,26 @@ def gate2(out: Path) -> Dict[str, Any]:
 def format_gate2(rep: Dict[str, Any]) -> str:
     f = lambda ms, scale=1: "-" if not ms or ms.get("mean") is None else (
         f"{scale * ms['mean']:+.1f}" + (f"±{scale * ms['se']:.1f}" if ms.get("se") is not None else ""))
-    lines = [f"== Gate 2: {rep['folder']} =="]
+    lines = [f"== Gate 2: {rep['folder']} ==",
+             "score is the primary outcome, alignment the secondary one (decided 2026-11-17)"]
     for name, t in rep["tables"].items():
         lines.append(f"\nseeds {rep['seed_sets'][name]} ({name})")
-        for ego in EGOS:
+        for ego in t.get("egos", EGOS):
             lines.append(f"  {ego:<11} score {f(t['means'][f'{ego}:score']):>12}   alignment "
                          f"{f(t['means'][f'{ego}:alignment'], 100):>12} %")
-        for k, v in t["diffs"].items():
-            scale = 100 if k.endswith("alignment") else 1
-            per = ", ".join(f"{c} {f(x, scale)}" for c, x in sorted(v["cards"].items()))
-            lines.append(f"  {k:<28} {f(v['all'], scale):>12}   [{per}]")
+        for m, label in (("score", "primary"), ("alignment", "secondary")):
+            lines.append(f"  {m} ({label}), aligned minus:")
+            for k, v in t["diffs"].items():
+                if not k.endswith(":" + m):
+                    continue
+                scale = 100 if m == "alignment" else 1
+                per = ", ".join(f"{c} {f(x, scale)}" for c, x in sorted(v["cards"].items()))
+                lines.append(f"    {k.split(':')[0][len('aligned-'):]:<12} {f(v['all'], scale):>12}   [{per}]")
+        for other in ("generic", "uninformed"):
+            d = t["diffs"].get(f"aligned-{other}:score", {}).get("all") or {}
+            if d.get("mean") is not None and d.get("se") is not None:
+                verdict = "yes" if d["mean"] - 2 * d["se"] > 0 else "no"
+                lines.append(f"  score headroom over {other} (mean - 2 SE > 0): {verdict}")
     return "\n".join(lines)
 
 

@@ -183,9 +183,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sorted(rep["held_out_vs_reference"]["tom_struct"]), [0, 1, 2])
         self.assertIn("memory_fb", rep["contrasts"]["tom_struct"])
         self.assertIn("memory_fb", rep["probe"])
+        self.assertIn("oracle", rep["interaction_contrasts"]["score"])
+        self.assertEqual(sorted(rep["interaction_contrasts"]["score"]["oracle"]["days"]), [1, 2])
+        self.assertIn("memory_fb", rep["alignment_contrasts"]["tom_struct"])
         text = format_report(rep)
-        for part in ("held-out score minus reference", "knowledge probe", "daily feedback"):
+        for part in ("held-out score minus reference", "knowledge probe", "daily feedback",
+                     "score value of knowing the partner", "secondary: held-out alignment"):
             self.assertIn(part, text)
+        self.assertLess(text.index("== PRIMARY"), text.index("== secondary"))
 
 
 if __name__ == "__main__":

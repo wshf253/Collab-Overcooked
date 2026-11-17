@@ -241,6 +241,47 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.15 Score is the primary outcome; with the twin, the cards have no score headroom (2026-11-17)
+**Decision (user, 2026-11-17):** score is the primary outcome, alignment secondary (plan §15).
+`coop.learning`, `persona_check gate2` and `voi --cards` print score first.
+
+**Twin Gate 2** (`voi --cards`, open2_env, radius 2, 2 orders). It now includes an `uninformed`
+ego: the aligned ego's machinery with no rule.
+
+| aligned minus | score, seeds 0–7 | score, seeds 8–15 | alignment (points), 0–7 / 8–15 |
+|---|---|---|---|
+| generic (steady) | −19 ± 6 | −6 ± 4 | +24 / +22 |
+| uninformed | −15 ± 7 | −4 ± 4 | +25 / +22 |
+| misaligned | +49 ± 16 | +52 ± 13 | +31 / +28 |
+
+- **The negative score is not an implementation artefact:** uninformed ≈ generic.
+- **The misaligned gain comes from p2 and p4.** p2 is +160 / +108: nobody serves. p4 is +70 / +105.
+- **For p1 and p3, the misaligned ego does as well as the aligned one or better.**
+
+**Score value of one rule** (`voi --rules`, 16 seeds; the twin has only that rule):
+- **Knowing a rule rarely matters.** Against the uninformed ego it is worth between −16 and
+  +12 points, SE 2–7, out of about 230.
+- **Accommodating costs the most for `serves(self)` (−16) and `on_contention(insists)` (−10).**
+  The ego gives up serving or gives way.
+- **The one large value is a wrong belief, not missing knowledge.** `serves(ego)` vs the opposite
+  belief is +159, but vs no belief only +12: a reactive ego sees the plated dish and serves it.
+
+**Reading.** With the twin, the habits are cheap to ignore: its fallbacks absorb conflicts, and
+a reactive ego fills the gaps it sees. In score, knowing the partner pays only when it replaces a
+wrong belief.
+
+Two things the twin cannot show decide whether the current cards can produce a score gain:
+- whether the LLM partner makes the habits costly to ignore (Gate 2 with the LLM partner);
+- whether the LLM ego, which reacts less well than the scripted ego, gains from knowing them
+  (`oracle` − `tom_struct`).
+
+If both are about zero, the rules need consequences for being ignored before the learning runs
+(plan §14, first row). For example:
+- a station the partner waits for instead of switching;
+- a dish it leaves unstarted for the ego;
+- `serves(ego)` on more cards;
+- tighter order deadlines, so anticipation pays.
+
 ### 3.14 Multi-day learning setup: built, not yet run (plan sections 6–11, 2026-11-17)
 Built:
 - day schedule and controlled order lists;
@@ -281,8 +322,7 @@ partner (intention state, reminders), runner integration, rule egos, gate tools,
   whose serving bottlenecks.
 - A wrong partner model is very costly: p2 +150 to +170, where nobody serves.
 
-This is the plan's open point §15 (alignment headroom, but no score headroom over generic). It
-needs a decision before the learning runs.
+This was the plan's open point §15. Decided 2026-11-17: score is primary, alignment secondary (§3.15).
 
 ### 3.12 Replication of §3.11 (`days_model_v2_rep`, run seeds 4–7, 2026-11-17)
 
@@ -497,8 +537,10 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 3. **A second model**, to check generality.
 0. **Design reference: `docs/PERSONA_PARTNER_PLAN_v2.md`** (dates and stop points not binding).
    Built: the persona partner and gate tools (§3.13), and the multi-day learning setup (§3.14).
-   Next: Gate 1 (partner usable?) with Qwen as partner, then the pilot with
-   `configs/coop/days_persona.yaml`.
+   Score is the primary outcome (§3.15). Next: Gate 1 (running), Gate 2 with the LLM partner,
+   and `oracle` vs `tom_struct` with the LLM ego (score value of knowing the partner). Then
+   either the pilot with `configs/coop/days_persona.yaml`, or first rules whose violation costs
+   score (§3.15).
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated

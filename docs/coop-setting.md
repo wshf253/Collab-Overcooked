@@ -719,7 +719,20 @@ python -m coop.persona_check gate2 outputs/gate2_llm --out outputs/gate2_llm/gat
 - the distinctness classifier.
 
 `persona_check gate2` and `voi --cards` report aligned − generic and aligned − misaligned for
-score and alignment, on two seed sets and per card.
+score (the primary outcome) and alignment (secondary), on two seed sets and per card, with a
+line saying whether there is score headroom (mean − 2 SE > 0).
+
+`voi --cards` adds an `uninformed` ego: the aligned ego's own machinery (`RulePlayer`) with no
+rule. Aligned − uninformed is the value of knowing the card with everything else equal; aligned −
+generic also includes the difference between the two scripted implementations.
+
+**Score value of one rule** (`voi --rules`). The twin gets a single library rule (every parameter
+value that exists in the kitchen). The aligned ego knows it, the uninformed and generic egos know
+nothing, and the opposite ego believes the flipped parameter. All differences are paired over seeds.
+
+```bash
+python -m coop.voi --rules --layout open2_env --open-orders 2 --view-radius 2 --seeds 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 --workers 16 --out outputs/rule_value_twin.json
+```
 
 ## Multi-day partner learning (plan v2, sections 6–11)
 
@@ -786,11 +799,14 @@ in the ego's view (Chebyshev distance ≤ view radius).
 - `dayDD/knowledge_probe.json`;
 - `day00/` (before day 1).
 
-**Learning curves** (`coop.learning OUT`):
+**Learning curves** (`coop.learning OUT`). Score is the primary outcome and alignment the
+secondary one (decided 2026-11-17); the report prints them in that order.
 - held-out score minus the reference for days 0–5;
-- alignment and partner adherence on held-out episodes;
 - each condition minus `tom_struct` and minus `memory_fb`, paired over runs (per day, the
-  average over days 1–5, and per persona);
+  average over days 1–5, and per persona), for score and then for alignment;
+- interaction-episode score, each condition minus `tom_struct` (the same episode seeds in every
+  condition). `oracle` − `tom_struct` here is the score value of knowing the partner for this ego;
+- alignment and partner adherence on held-out episodes;
 - probe accuracy (exposed / not exposed / absent);
 - cumulative exposure per rule;
 - feedback checks, trimmed lines, and invalid replies and fallbacks for ego and partner.
