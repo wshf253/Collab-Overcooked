@@ -241,6 +241,66 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.20 Plan v3 W1–W3: timers, context rules, Gate 0 fails (2026-11-17)
+**Design reference:** `docs/CONTEXT_PARTNER_PLAN_v3.md` (replaces v2's personas, gates and
+pilot).
+
+**Built:**
+- **W1:** order timers with expiry; context features; reference times; the duplication check
+  (a second last ingredient is accepted, and the batch is thrown away when started).
+- **W2:** the four context rules (no fallbacks); cards A and B; the twin with the deadlock guard;
+  the proactive, mismatched and reactive scripted egos; checks judged at the decision step in
+  the chooser's own view.
+- **Old configs:** identical (2,821 mock episode files).
+- **Twin adherence:** 96–100% at radius 2.
+
+**Gate 0** (twin partner, scripted egos, `open_ing2_env`, menu boiled_potato_slices /
+baked_carrot_soup / sliced_carrot_and_potato_stew, 2 orders, calibration seeds 0–7, judge
+seeds 8–15).
+
+Base setting (slack 1.5, θ 15, penalty 20, radius 2), score per episode on the judge seeds:
+
+| ego | card A | card B |
+|---|---|---|
+| proactive | 45.0 | 70.0 |
+| mismatched | −52.5 | 42.5 |
+| steady | 65.0 | 102.5 |
+| always_take_urgent | 72.5 | 107.5 |
+| never_take_urgent | 55.0 | 82.5 |
+| wait_and_see 3 / 6 / 10 | 22.5 / −25.0 / −35.0 | 35.0 / 35.0 / 25.0 |
+
+- **Proactive − best reactive:** A −20 [−62, +22], B −38 [−106, +31]. Fail.
+- **Proactive − mismatched:** A +98 [+51, +144], B +28 [−34, +89].
+- **Guard firings with the proactive ego:** ≤ 0.12 per episode.
+
+**Tuning** (plan order: slack, θ, penalty, radius; all 48 settings in `outputs/gate0_sweep.json`):
+- slack {1.0, 1.25, 1.5, 2.0} × θ {10, 15, 25} × expiry penalty {20, 40} × radius {2, 1}.
+- **No setting passes.**
+- **Proactive − best reactive**, mean over settings: **A −6** (20 of 48 above 0, every
+  interval includes 0); **B −49** (all 48 below 0).
+- **Proactive − mismatched**, mean: A +95, B +15.
+
+**Each context rule alone** (`outputs/gate0_rules_base.json`, 16 seeds; proactive − steady):
+- **The only clear value:** `default_work(whole)` +43 ± 13.
+- **Everything else is near 0 or negative:** `prep` +1 ± 6, `takes` +6 ± 8,
+  `takes(unless)` −13 ± 6, `keeps` 0 ± 7, `clears` −5 ± 9, `waits` +4 ± 10, `switches` −19 ± 13,
+  `continues` −15 ± 11.
+
+**Reading** (plan §11: Gate 0 fails after tuning, radius 1 tried → report before redesigning):
+1. **The scripted egos never commit before observing (R2 does not hold for them).** They
+   re-plan every step, and drop a job as soon as the state shows someone else doing it. So
+   "wait and see" costs them nothing, and the reactive `steady` already works oldest order
+   first, which is the urgent one: steady ≈ `always_take_urgent`. Macro latency exists only
+   for LLM players.
+2. **Card B is inconsistent with its own best response.** `whole` + `on_prep_ready(switches)`
+   means B grabs the ego's prepared items for any order once they lie 5 steps. The proactive
+   ego for B is told to keep preparing, so its own order loses its items. This is plan §11,
+   "revise the mode definitions".
+3. **What carries value is a wrong model, not missing knowledge.** Mismatched is far below
+   proactive for card A (+95), as in v2.
+
+Stopped here for a decision (plan W3: report, then stop). No redesign has been done.
+
 ### 3.19 Open kitchen with one dispenser per ingredient (`open_ing2_env`, 2026-11-17)
 **User's direction:** keep the map open (a divided map makes knowing the partner meaningless,
 because roles are fixed), with more ingredients and more recipes. Start with two ingredients,
@@ -717,13 +777,15 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
    "order habits" table in `coop.analyze`). Still to run: the value screen with 16+ seeds, then
    `configs/coop/days_llm_orders.yaml` (`open2_env`, 2 open orders, radius 2, all controls).
 3. **A second model**, to check generality.
-0. **Design reference: `docs/PERSONA_PARTNER_PLAN_v2.md`** (dates and stop points not binding).
+0. **Design reference: `docs/CONTEXT_PARTNER_PLAN_v3.md`** (builds on `docs/PERSONA_PARTNER_PLAN_v2.md`).
    Built: the persona partner and gate tools (§3.13), and the multi-day learning setup (§3.14).
    Score is the primary outcome (§3.15). Gates 1 and 2 on batch1 are done (§3.16–3.17): the
    partner is usable, and there is no score headroom. Revised cards (batch2, §3.18). Then a
    new open kitchen with one dispenser per ingredient (`open_ing2_env`, §3.19). Next: Gate 1
    and the value check with the LLM ego on that kitchen (`persona_gate1_ing2.yaml`,
    `persona_value_ing2.yaml`), then the pilot with `days_persona_ing2.yaml`.
+   **Superseded by plan v3** (`docs/CONTEXT_PARTNER_PLAN_v3.md`): W1–W3 are done and Gate 0 fails
+   (§3.20). Stopped for a decision (plan §11). W0 (`persona_value_ing2.yaml`) can run in the background.
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated
