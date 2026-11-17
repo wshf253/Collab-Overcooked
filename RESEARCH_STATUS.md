@@ -241,6 +241,42 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.17 Gate 2 with the Qwen partner: no score headroom; Gate 1 final (2026-11-17)
+**Gate 1, re-scored with all check fixes:**
+- **Passes (judge seeds ≥ 75%):** every rule the partner can follow. This includes
+  `serves(self)` on p3 (82%), `split_dish` (90–100%) and `waits_for_commit` (93–100%).
+- **Fails:** `handover_spot` (the action cannot choose a counter) and `wants_supplies` (3
+  opportunities in 24 episodes). Both will be dropped.
+- **Twin, re-scored from the old folder:** few `serves(self)` judgments ("100% of 1"). Scripted
+  decision steps were not saved there, so the estimate is conservative. Online, the twin passes
+  this rule at 100%.
+
+**Gate 2 with the Qwen partner** (`gate2_llm`, scripted egos, 4 cards × 8 seeds × 3 episodes).
+Paired score, aligned minus:
+
+| | seeds 0–3 | seeds 4–7 | pooled | per card (pooled) |
+|---|---|---|---|---|
+| generic | −6 ± 6 | −33 ± 8 | **−20 ± 5** | p1 −15, p2 +6, p3 −48, p4 −23 |
+| misaligned | +33 ± 12 | +25 ± 18 | **+29 ± 11** | p1 −8, p2 +98, p3 −31, p4 +58 |
+
+- Alignment: aligned − generic +26 points, aligned − misaligned +31.
+- **Same pattern as the twin (§3.15):** doing what the partner wants costs points against a
+  reactive generic ego. Only a wrong belief is costly (p2: nobody serves; p4).
+- With score primary, an ego that learns these cards perfectly would score below one that
+  ignores them. Plan §14: change the rules before any learning run.
+
+**Setting levers do not fix it** (twin, `voi --cards`, aligned − generic score, seeds 0–7):
+
+| setting | aligned − generic |
+|---|---|
+| radius 1 | +4 ± 10 |
+| radius 2 | −13 ± 6 |
+| full view | −21 ± 6 |
+| radius 2, 3 open orders | −7 ± 7 |
+| radius 2, 1 open order | −8 ± 3 |
+
+A smaller view helps a little (knowledge stands in for observation), but no setting gives a gain.
+
 ### 3.16 Gate 1 with Qwen3.8-27B as partner (`gate1_llm`, 2026-11-17)
 Scripted steady ego, 4 cards + neutral, 4 seeds × 3 episodes, radius 2. The bar is 70% on judge
 seeds 2–3.
