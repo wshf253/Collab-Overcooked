@@ -244,7 +244,7 @@ The code differs: the new probe has a pace line and new options, which also chan
 ### 3.15 Score is the primary outcome; with the twin, the cards have no score headroom (2026-11-17)
 **Decision (user, 2026-11-17):** score is the primary outcome, alignment secondary (plan §15).
 
-**Gate 1 folders** (`gate1_twin`, `gate1_llm`) were started at commit 95db62c (code version
+**Gate folders** (`gate1_twin`, `gate1_llm`, `gate2_llm`, and `gate2_twin.json` from `voi --cards`) were started at commit 95db62c (code version
 9d6b5c7aff20d1c5), before the multi-day work (6818ca92cc831a15). A mock-model run of all three gate
 configs at both commits gave identical steps, prompts and summaries; the later commit only adds log
 fields. Their results therefore hold for the current code. Resuming them needs `--allow-code-change`.
