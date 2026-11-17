@@ -303,6 +303,27 @@ predicate table):
 Runs started before this change (all gate folders) play with the old reminders and must not be
 resumed on the new code.
 
+**Re-scored Gate 1** (`--rescored`, 60 of 60 episodes):
+- **Now pass:**
+  - `split_dish`: p2 100%, p4 90%;
+  - `waits_for_commit`: p2 88%, p3 97%, p4 92% (judge seeds).
+- **Still fail:**
+  - `handover_spot` (mechanism);
+  - `wants_supplies` (3 opportunities);
+  - `serves(self)` on p3 (64%).
+- **Cause of the `serves(self)` failure:** its examples were decided several steps before food was
+  ready (a reminder was shown in only 3 of 28 cases), and the check looked at the kitchen when
+  the action completed.
+- **Fix:** checks about the situation a choice was made in now use the step it was decided:
+  - an LLM player's macro decision (passed to the evaluator; from the partner log when re-scoring);
+  - a scripted player's job choice.
+- **Twin after this fix:** `serves(self)` 100% (full view) / 93% (radius 2); cards 95–100% / 92–95%.
+
+The ordinary passes are also cleaner than they look. Most `own_station` misses (p1 oven1, p4
+board1) are the fallback: the partner's goal says its own station still held finished food.
+The check treats that station as free.
+
+
 Next: re-score `gate1_llm` and read the remaining failures, then revise the cards in a new card
 file (the running Gate 2 uses batch1). The plan's order is wording, then `enforce`, then drop.
 `handover_spot` and `wants_supplies` cannot be fixed by wording.

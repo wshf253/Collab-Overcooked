@@ -368,6 +368,10 @@ def replay_rules(ep_dir: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
     rules = dc.cards()[persona].active(dc.partner.get("complexity"))
     ev = RuleEvaluator(rules, load_library(), Kitchen(env.mdp, ego, start), normalize_menu(menu), ego, other,
                        dc.open_orders, env.mdp, view_radius=dc.view_radius)
+    import bisect
+    plog_path = ep_dir / "partner_log.json"
+    dec_ts = sorted(d.get("t", 0) for d in (json.loads(plog_path.read_text()).get("decisions") or [])) \
+        if plog_path.exists() else []
     match = True
     for line in (ep_dir / "steps.jsonl").read_text().splitlines():
         rec = json.loads(line)
@@ -375,7 +379,8 @@ def replay_rules(ep_dir: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
         pre = env.state
         with contextlib.redirect_stdout(io.StringIO()):
             post, _, _, _ = env.step(acts, rec["params"])
-        ev.observe(rec["t"], pre, post, None)
+        i = bisect.bisect_right(dec_ts, rec["t"]) - 1      # the LLM partner's decision behind this step
+        ev.observe(rec["t"], pre, post, {"decided": {"partner": dec_ts[i] if i >= 0 else None}})
         if abs(env.score - rec["score"]) > 1e-9 or any(
                 list(p.position) != r["pos"] for p, r in zip(post.players, rec["players"])):
             match = False
@@ -568,7 +573,7 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
     import io
     from .env import ContinuousOrderEnv
     from .kitchen import Kitchen
-    from .rule_eval import RuleEvaluator, intent_target
+    from .rule_eval import RuleEvaluator, decided_at, intent_target
     from .rule_partner import RulePlayer
     from .rules import load_library
     env = ContinuousOrderEnv(menu, layout=layout, horizon=horizon, open_orders=open_orders)
@@ -585,7 +590,8 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
         moves = [None, None]
         moves[ego_index] = ego_player.act(pre, t)
         moves[other] = partner.act(pre, t)
-        intents = {"ego": intent_target(ego_player, k), "partner": intent_target(partner, k)}
+        intents = {"ego": intent_target(ego_player, k), "partner": intent_target(partner, k),
+                   "decided": {"ego": decided_at(ego_player), "partner": decided_at(partner)}}
         with contextlib.redirect_stdout(io.StringIO()):
             env.step([m[0] for m in moves], [m[1] for m in moves])
         ev.observe(t, pre, env.state, intents)

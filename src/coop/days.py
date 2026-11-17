@@ -67,7 +67,7 @@ from .kitchen import Kitchen
 from .profile import MODEL_SECTIONS, avoid_options, score_profile, truth_profile
 from . import rule_partner  # noqa: F401  (registers the "rule_ego" agent type)
 from .llm_partner import LLMPartner, LLMPartnerPlayer
-from .rule_eval import RuleEvaluator, intent_target
+from .rule_eval import RuleEvaluator, decided_at, intent_target
 from .rule_partner import RulePlayer
 from .rules import NEUTRAL, load_cards, load_library, render
 from . import feedback as day_feedback_mod
@@ -361,7 +361,8 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
             intents = None
             if evaluator is not None:
                 kit = evaluator.tracker.k
-                intents = {"ego": intent_target(agent, kit), "partner": intent_target(partner, kit)}
+                intents = {"ego": intent_target(agent, kit), "partner": intent_target(partner, kit),
+                           "decided": {"ego": decided_at(agent), "partner": decided_at(partner)}}
             state, reward, _, info = env.step([m[0] for m in moves], [m[1] for m in moves])
             agent.observe(t, reward, info)
             if hasattr(partner, "observe"):

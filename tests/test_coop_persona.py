@@ -68,6 +68,20 @@ class RuleLibraryTests(unittest.TestCase):
             self.assertGreaterEqual(len(variants), 2, cat)      # differs between cards (params or present/absent)
         self.assertEqual(self.cards[NEUTRAL].rules, [])
 
+    def test_decision_step(self):
+        """Checks about the situation a choice was made in use the step it was decided at."""
+        from types import SimpleNamespace
+        from coop.rule_eval import Ctx, Tracker, decided_at
+        self.assertEqual(decided_at(SimpleNamespace(agent=SimpleNamespace(decisions=[{"t": 3}, {"t": 9}]))), 9)
+        self.assertEqual(decided_at(SimpleNamespace(job="x", job_t=5)), 5)   # scripted: its current job
+        self.assertIsNone(decided_at(SimpleNamespace(job=None, job_t=5)))
+        env = quiet(ContinuousOrderEnv, DEFAULT_MENU, layout="open2_env", open_orders=2)
+        state = quiet(env.reset, 0)
+        tr = Tracker(Kitchen(env.mdp, 0, state), DEFAULT_MENU, {0: "ego", 1: "partner"}, 2)
+        self.assertEqual(Ctx(10, state, state, [], tr, {}, {"decided": {"partner": 4}}).decided("partner"), 4)
+        tr.prev_event_t["partner"] = 7
+        self.assertEqual(Ctx(10, state, state, [], tr, {}, None).decided("partner"), 8)   # estimate
+
     def test_contradictions_are_rejected(self):
         r = lambda e: parse_rule(e, self.lib)
         self.assertTrue(check_rules([r({"solo_dish": {"dish": "boiled_egg"}}), r({"split_dish": {"dish": "boiled_egg"}})]))

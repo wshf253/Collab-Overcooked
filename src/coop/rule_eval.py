@@ -223,6 +223,8 @@ class Tracker:
         self.ready_since: Dict[str, int] = {}                  # finished food in the utensil
         self.order_of: Dict[str, Optional[str]] = {"ego": None, "partner": None}
         self.last_choice: Dict[str, int] = {"ego": -10 ** 6, "partner": -10 ** 6}
+        self.last_event_t: Dict[str, Optional[int]] = {"ego": None, "partner": None}
+        self.prev_event_t: Dict[str, Optional[int]] = {"ego": None, "partner": None}
         self.new_orders: List[Dict[str, Any]] = []             # {"t", "dish", "ego_empty"}
         self.takeovers: List[Dict[str, Any]] = []              # ego took over partner items: {"t", "dishes"}
         self.events: List[Event] = []
@@ -275,6 +277,8 @@ class Tracker:
         return events
 
     def _apply(self, ev: Event, pre) -> None:
+        self.prev_event_t[ev.who] = self.last_event_t.get(ev.who)
+        self.last_event_t[ev.who] = ev.t
         u = ev.utensil
         if ev.verb == "put" and u:
             self.loaders.setdefault(u, []).append((ev.who, ev.item or ""))
@@ -414,6 +418,16 @@ class Ctx:
         self.intents = intents or {}
         self.rules = rules or []
         self.open = open_orders(pre, tracker.n_open)
+
+    def decided(self, who: str) -> int:
+        """The step at which ``who`` decided the action completed now (``intents["decided"]``:
+        an LLM player's macro, a scripted player's job). Unknown (e.g. re-scoring a scripted
+        player): estimated as the step after its previous completed action."""
+        d = (self.intents.get("decided") or {}).get(who)
+        if d is not None:
+            return d
+        prev = self.tr.prev_event_t.get(who)
+        return prev + 1 if prev is not None else 0
 
     def has_job(self, who: str, pred) -> bool:
         """Was there a job for ``who`` matching ``pred`` (for the partner: one its own rules allow)?"""
@@ -629,10 +643,13 @@ class Serves(Check):
         return out
 
     def _ready(self, ctx) -> bool:
+        """Finished food was waiting when the partner decided (not only when its action completed)."""
         split = {r.p["dish"] for r in ctx.rules if r.id == "split_dish"}
+        dec = ctx.decided("partner")
         for u in ctx.k.utensils:
             status, product, _, _ = ctx.k.utensil_status(ctx.pre, u)
-            if status == "finished" and product in ctx.info.menu and product not in split:
+            if status == "finished" and product in ctx.info.menu and product not in split \
+                    and ctx.tr.ready_since.get(u, 10 ** 9) <= dec:
                 return True
         return False
 
@@ -846,6 +863,8 @@ class WaitsForCommit(Check):
                     o["partner_done"] = True
                     if not o.get("partner_free", True):
                         continue        # busy when the order came in: carrying on is not covered
+                    if ctx.decided("partner") < o["t"]:
+                        continue        # decided before the order appeared
                     ego_first = o.get("ego_t") is not None and o["ego_t"] <= ev.t
                     out.append(self.J(ctx, "partner", ev.t - o["t"] >= COMMIT_WAIT or ego_first,
                                       f"started {ev.t - o['t']} steps after {o['dish']} opened"))
@@ -921,6 +940,19 @@ class RuleEvaluator:
             rows["exposure"] = sum(1 for j in self.judgments if j.rule == lab and j.side == "partner" and j.seen)
             out[lab] = rows
         return out
+
+
+def decided_at(player) -> Optional[int]:
+    """The step at which a player chose what it is doing now: an LLM player's latest decision
+    (its current macro), a scripted player's current job; None if unknown."""
+    a = getattr(player, "agent", player)
+    ds = getattr(a, "decisions", None)
+    if ds:
+        return ds[-1].get("t")
+    p = getattr(a, "player", a)
+    if getattr(p, "job", None) is not None:
+        return getattr(p, "job_t", None)
+    return None
 
 
 def intent_target(player, kitchen) -> Optional[str]:
