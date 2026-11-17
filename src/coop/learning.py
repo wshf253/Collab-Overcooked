@@ -106,11 +106,14 @@ def interaction(data: Dict[str, Any]) -> Dict[Tuple[str, str, int], Dict[int, Di
     episodes (seeds are shared across conditions, so differences are paired)."""
     acc: Dict[Tuple[str, str, int], Dict[int, Dict[str, List[float]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list)))
+    ref = {(p, s, d, e): v["score"] for (c, p, s, d, e), v in data["inter"].items() if c == REFERENCE}
     for (c, p, s, d, e), v in data["inter"].items():
         if c == REFERENCE:
             continue
         r = acc[(c, p, s)][d]
         r["score"].append(v["score"])
+        if (p, s, d, e) in ref:
+            r["vs_ref"].append(v["score"] - ref[(p, s, d, e)])
         al, _ = composite(v, "ego")
         if al is not None:
             r["alignment"].append(al)
@@ -213,6 +216,7 @@ def report(out: Path) -> Dict[str, Any]:
     return {
         "folder": str(out), "days": data["days"],
         "held_out_vs_reference": curves(runs, "vs_ref"),
+        "interaction_vs_reference": curves(interaction(data), "vs_ref"),
         "alignment": curves(runs, "alignment", 100),
         "adherence": curves(runs, "adherence", 100),
         "contrasts": {b: contrasts(runs, b, data["days"]) for b in BASELINES},
@@ -246,17 +250,26 @@ def format_report(rep: Dict[str, Any]) -> str:
             lines.append(f"{c:<14}" + "".join(f"{f(r['days'].get(d)):>12}" for d in ds) + f"{f(r[avg_key]):>14}")
             lines.append(f"{'':<14}per persona: " + ", ".join(f"{p} {f(v)}" for p, v in sorted(r["personas"].items())))
 
-    lines += ["\n== PRIMARY: held-out score minus reference (mean±SE over runs) ==", head]
-    for c, by_day in sorted(rep["held_out_vs_reference"].items()):
-        lines.append(f"{c:<14}" + "".join(f"{f(by_day.get(d)):>12}" for d in days))
+    if any(v for v in rep["held_out_vs_reference"].values()):
+        lines += ["\n== PRIMARY: held-out score minus reference (mean±SE over runs) ==", head]
+        for c, by_day in sorted(rep["held_out_vs_reference"].items()):
+            lines.append(f"{c:<14}" + "".join(f"{f(by_day.get(d)):>12}" for d in days))
     for base, cs in rep["contrasts"].items():
         contrast_block(f"PRIMARY: held-out score, condition minus {base} (paired over runs)", cs, days)
     inter_days = [d for d in days if d >= 1]
+    inter_ref = rep.get("interaction_vs_reference") or {}
+    if any(v for v in inter_ref.values()):
+        lines += ["\n== PRIMARY: interaction-episode score minus reference (mean±SE over runs) ==",
+                  f"{'condition':<14}" + "".join(f"{'day ' + str(d):>12}" for d in inter_days)]
+        for c, by_day in sorted(inter_ref.items()):
+            lines.append(f"{c:<14}" + "".join(f"{f(by_day.get(d)):>12}" for d in inter_days))
     contrast_block("PRIMARY: interaction-episode score, condition minus tom_struct (paired; "
                    "oracle - tom_struct = score value of knowing the partner)",
                    rep.get("interaction_contrasts", {}).get("score"), inter_days)
     for title, key in (("secondary: alignment with the partner's rules on held-out episodes (%)", "alignment"),
                        ("partner adherence on held-out episodes (%)", "adherence")):
+        if not any(v for v in rep[key].values()):
+            continue
         lines += [f"\n== {title} ==", head]
         for c, by_day in sorted(rep[key].items()):
             lines.append(f"{c:<14}" + "".join(f"{f(by_day.get(d)):>12}" for d in days))

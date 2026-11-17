@@ -29,7 +29,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .rules import Rule, counter_groups, render
+from .rules import OWN_STATION_PATIENCE, Rule, counter_groups, render
 
 Pos = Tuple[int, int]
 FALLBACK_WAIT = 20        # split_dish / serves(ego): finish yourself after this many steps
@@ -222,6 +222,7 @@ class Tracker:
         self.complete_since: Dict[str, int] = {}               # complete, unstarted batch
         self.ready_since: Dict[str, int] = {}                  # finished food in the utensil
         self.empty_since: Dict[str, int] = {}                  # utensil empty
+        self.busy_since: Dict[str, int] = {}                   # utensil not empty
         self.order_of: Dict[str, Optional[str]] = {"ego": None, "partner": None}
         self.last_choice: Dict[str, int] = {"ego": -10 ** 6, "partner": -10 ** 6}
         self.last_event_t: Dict[str, Optional[int]] = {"ego": None, "partner": None}
@@ -316,8 +317,10 @@ class Tracker:
                 self.starter.pop(u, None)
                 self._first_load_t.pop(u, None)
                 self.empty_since.setdefault(u, t if self.started and t > 1 else 0)
+                self.busy_since.pop(u, None)
             else:
                 self.empty_since.pop(u, None)
+                self.busy_since.setdefault(u, t)
             if status == "loaded" and self.info.product_of(self.k.kind_of[u], self.k.utensil_status(post, u)[2]):
                 self.complete_since.setdefault(u, t)
             else:
@@ -388,10 +391,10 @@ def partner_allows(job, dishes: set, rules: List[Rule], tracker: "Tracker", now:
         if r.id == "split_dish" and job_finishing(job, dishes, r.p["dish"]):
             since = tracker.complete_since if job.kind == "start" else tracker.ready_since
             u = tracker.k.utensil_at.get(tuple(job.pos)) if job.pos is not None else None
-            if not (u in since and now - since[u] >= FALLBACK_WAIT):
+            if not (u in since and now - since[u] >= int(r.opt("patience"))):
                 return False
         if r.id == "serves" and r.p["who"] == "ego" and job.stage == "serve":
-            if not any(now - x >= FALLBACK_WAIT for x in tracker.ready_since.values()):
+            if not any(now - x >= int(r.opt("patience")) for x in tracker.ready_since.values()):
                 return False
     return True
 
@@ -478,11 +481,18 @@ class OwnStation(Check):
             if ev.who == "partner" and ev.verb == "put":
                 # the fallback applies if its station was busy when it decided (it may have
                 # been emptied by the time the item went in)
+                dec = ctx.decided("partner")
                 free = ctx.info.loadable(ctx.pre, self.s, ev.item) and (
                     ctx.k.utensil_status(ctx.pre, self.s)[0] != "empty"
-                    or ctx.tr.empty_since.get(self.s, 10 ** 9) <= ctx.decided("partner"))
+                    or ctx.tr.empty_since.get(self.s, 10 ** 9) <= dec)
                 ok = u == self.s or not free
-                out.append(self.J(ctx, "partner", ok, f"loaded {u}"))
+                note = f"loaded {u}"
+                if u != self.s and not free and self.rule.opt("when_taken") == "wait" \
+                        and ctx.tr.owner(self.s) == "ego":
+                    waited = dec - ctx.tr.busy_since.get(self.s, dec)
+                    ok = waited >= OWN_STATION_PATIENCE    # it waits for its station while the ego uses it
+                    note = f"loaded {u} while the ego used {self.s} for {waited} steps"
+                out.append(self.J(ctx, "partner", ok, note))
             elif ev.who == "ego" and ev.verb in ("put", "start", "fill", "pickup"):
                 if u != self.s:
                     out.append(self.J(ctx, "ego", True, f"{ev.verb} at {u}"))
@@ -546,7 +556,8 @@ class SplitDish(Check):
                 else:
                     since = ctx.tr.complete_since if ev.verb == "start" else ctx.tr.ready_since
                     waited = ctx.tr.waited(since, ev.utensil, ctx.t) if ev.utensil else 0
-                    out.append(self.J(ctx, "partner", waited >= FALLBACK_WAIT, f"{ev.verb} {d} after {waited}"))
+                    out.append(self.J(ctx, "partner", waited >= int(self.rule.opt("patience")),
+                                      f"{ev.verb} {d} after {waited}"))
         return out
 
     def opportunity(self, view, tracker, me, target=None):
@@ -646,7 +657,7 @@ class Serves(Check):
                     if self._ready(ctx):
                         out.append(self.J(ctx, "partner", serve_stage(ev, ctx.info), f"{ev.verb} {ev.item}"))
                 else:
-                    late = any(ctx.t - s >= FALLBACK_WAIT for s in ctx.tr.ready_since.values())
+                    late = any(ctx.t - s >= int(self.rule.opt("patience")) for s in ctx.tr.ready_since.values())
                     out.append(self.J(ctx, "partner", (not serve_stage(ev, ctx.info)) or late,
                                       f"{ev.verb} {ev.item}"))
         return out
@@ -875,7 +886,7 @@ class WaitsForCommit(Check):
                     if ctx.decided("partner") < o["t"]:
                         continue        # decided before the order appeared
                     ego_first = o.get("ego_t") is not None and o["ego_t"] <= ev.t
-                    out.append(self.J(ctx, "partner", ev.t - o["t"] >= COMMIT_WAIT or ego_first,
+                    out.append(self.J(ctx, "partner", ev.t - o["t"] >= int(self.rule.opt("patience")) or ego_first,
                                       f"started {ev.t - o['t']} steps after {o['dish']} opened"))
         return out
 
@@ -884,7 +895,8 @@ class WaitsForCommit(Check):
         if view.players[me].held_object is not None:
             return None
         for o in tracker.new_orders:
-            if 0 <= t - o["t"] < COMMIT_WAIT and o.get("ego_t") is None and o.get("partner_free", True):
+            if 0 <= t - o["t"] < int(self.rule.opt("patience")) and o.get("ego_t") is None \
+                    and o.get("partner_free", True):
                 return self.reminder(tracker.k)
         return None
 

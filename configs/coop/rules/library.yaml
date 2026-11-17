@@ -3,6 +3,7 @@
 # Every rule is a tendency with a fallback, never a prohibition. Fields:
 #   category   station | dish | order | stage | hand-over | reaction | initiative
 #   params     allowed values of each parameter
+#   options    optional parameters (first value = default; see coop.rules.OPTIONS)
 #   text       second person, for the partner's prompt ("You ...")
 #   fallback   when the tendency gives way, second person
 #   wants      what the rule asks of the other cook, first person (for the oracle ego and reports)
@@ -14,10 +15,15 @@
 own_station:
   category: station
   params: {station: [pot0, pot1, oven0, oven1, chopping_board0, chopping_board1, blender0, blender1]}
+  options: {when_taken: [switch, wait]}
   text: "You always use {station} and think of it as yours. You don't like your partner loading it or taking food out of it."
   fallback: "If {station} is busy with your own batch, use {other}."
   wants: "Use {other}; leave {station} to me."
   reminder: "{station} is yours: put your {kind} work there (use {other} only if {station} is busy)."
+  text_wait: "You always use {station} and think of it as yours. If your partner has put something in it, you wait until it is free again; you don't move your work to {other}."
+  fallback_wait: "If {station} is busy with your own batch, or you have waited {own_patience} steps for your partner's batch, use {other}."
+  wants_wait: "Use {other}; leave {station} to me. If you use it, I wait for it."
+  reminder_wait: "{station} is yours: put your {kind} work there; if your partner is using it, wait for it."
 
 solo_dish:
   category: dish
@@ -31,7 +37,8 @@ split_dish:
   category: dish
   params: {dish: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]}
   text: "For {dish} you do the preparation: you get and process the ingredients and load the final utensil. Then you leave it: starting the final utensil, plating and delivering {dish} is your partner's job."
-  fallback: "If a loaded {dish} batch or finished {dish} has waited 20 steps without your partner coming, finish it yourself."
+  options: {patience: [20, 40, 60]}
+  fallback: "If a loaded {dish} batch or finished {dish} has waited {patience} steps without your partner coming, finish it yourself."
   wants: "Start, plate and serve {dish}; I prepare and load it."
   reminder: "For {dish} you only prepare and load; leave starting the last step, plating and delivering to your partner."
 
@@ -46,12 +53,13 @@ order_priority:
 serves:
   category: stage
   params: {who: [self, ego]}
+  options: {patience: [20, 40, 60]}      # who=ego only: how long food waits before it serves
   text_self: "You like to finish things: you always plate the food and deliver it yourself."
   fallback_self: "If you are busy elsewhere for long, your partner may serve."
   wants_self: "Leave plating and delivering to me."
   reminder_self: "Food is being cooked or is ready: plating and delivering is your job."
   text_ego: "You never plate or deliver: serving is your partner's job. You stay with cooking and preparing."
-  fallback_ego: "If finished food has waited 20 steps without your partner coming, serve it yourself."
+  fallback_ego: "If finished food has waited {patience} steps without your partner coming, serve it yourself."
   wants_ego: "Do all the plating and delivering; I never serve."
   reminder_ego: "Leave plating and delivering to your partner."
 
@@ -94,8 +102,9 @@ on_contention:
 waits_for_commit:
   category: initiative
   params: {}
-  text: "When a new order comes in, you first wait up to 5 steps to see what your partner starts, and then you take what is left."
-  fallback: "After 5 steps you start anyway."
+  options: {patience: [5, 10]}
+  text: "When a new order comes in, you first wait up to {patience} steps to see what your partner starts, and then you take what is left."
+  fallback: "After {patience} steps you start anyway."
   wants: "Commit to a new order quickly; don't wait for me."
   reminder: "A new order just came in: wait a few steps to see what your partner starts."
 

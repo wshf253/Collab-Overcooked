@@ -68,6 +68,44 @@ class RuleLibraryTests(unittest.TestCase):
             self.assertGreaterEqual(len(variants), 2, cat)      # differs between cards (params or present/absent)
         self.assertEqual(self.cards[NEUTRAL].rules, [])
 
+    def test_optional_parameters(self):
+        r = lambda e: parse_rule(e, self.lib)
+        a = r({"split_dish": {"dish": "boiled_egg"}})
+        self.assertEqual(a, r({"split_dish": {"dish": "boiled_egg", "patience": 20}}))   # default not stored
+        self.assertEqual(a.label(), "split_dish(dish=boiled_egg)")
+        self.assertEqual(a.opt("patience"), "20")
+        b = r({"split_dish": {"dish": "boiled_egg", "patience": 40}})
+        self.assertEqual(b.label(), "split_dish(dish=boiled_egg, patience=40)")
+        self.assertIn("40 steps", render(b, "fallback", self.lib))
+        self.assertIn("20 steps", render(a, "fallback", self.lib))
+        w = r({"own_station": {"station": "pot1", "when_taken": "wait"}})
+        self.assertIn("wait until it is free", render(w, "text", self.lib))
+        self.assertIn("I wait for it", render(w, "wants", self.lib))
+        self.assertNotIn("wait", render(r({"own_station": {"station": "pot1"}}), "text", self.lib))
+        self.assertTrue(check_rules([w, r({"own_station": {"station": "pot0"}})]))      # still one per kind
+        with self.assertRaises(ValueError):
+            r({"split_dish": {"dish": "boiled_egg", "patience": 30}})
+        with self.assertRaises(ValueError):
+            r({"split_dish": {"patience": 40}})                                          # required missing
+
+    def test_revised_cards(self):
+        cards = {n: c for n, c in load_cards(ROOT / "configs/coop/personas/batch2.yaml", self.lib).items()
+                 if n != NEUTRAL}
+        self.assertEqual(sorted(cards), ["p1", "p2", "p3", "p4"])
+        for c in cards.values():
+            self.assertEqual(check_rules(c.rules), [])
+            self.assertTrue(c.backstory)
+            ids = {r.id for r in c.rules}
+            self.assertFalse(ids & {"handover_spot", "wants_supplies"}, c.name)
+            self.assertTrue(all(r.opt("when_taken") == "wait" for r in c.rules if r.id == "own_station"))
+        for a, b in itertools.combinations(cards.values(), 2):
+            self.assertGreaterEqual(len(set(a.rules) - set(b.rules)), 3, (a.name, b.name))
+        for cat in CATEGORIES:
+            if cat == "hand-over":
+                continue      # dropped with handover_spot (deviation from the plan, see the card file)
+            self.assertGreaterEqual(sum(any(category(r, self.lib) == cat for r in c.rules)
+                                        for c in cards.values()), 2, cat)
+
     def test_decision_step(self):
         """Checks about the situation a choice was made in use the step it was decided at."""
         from types import SimpleNamespace
@@ -285,6 +323,50 @@ class LLMPartnerTests(unittest.TestCase):
         self.assertEqual(misaligned["card"], "p2")
 
 
+class RevisedCardTwinTests(unittest.TestCase):
+    """batch2: the twin follows the waiting variants (radius 2, the gate setting)."""
+
+    def test_twin_adheres_to_revised_cards(self):
+        lib = load_library()
+        cards = load_cards(ROOT / "configs/coop/personas/batch2.yaml", lib)
+        for name in ("p1", "p2", "p3", "p4"):
+            a = n = 0
+            for seed in range(3):
+                r = play_rule_episode(DEFAULT_MENU, "open2_env", 300, seed, cards[name].rules,
+                                      SimulatedHuman(PERSONAS["steady"], "steady"), 2, 2)
+                self.assertGreater(r["score"], 100, name)
+                for row in r["rules"].values():
+                    a += row["partner"]["adherent"]
+                    n += row["partner"]["opportunities"]
+            self.assertGreaterEqual(a / n, 0.9, (name, a, n))
+
+    def test_twin_waits_for_its_station(self):
+        """own_station(when_taken=wait): while the other cook's batch is in its station, the
+        twin does not move that work to the other station."""
+        from coop.rule_partner import RulePlayer
+        lib = load_library()
+        rules = [parse_rule({"own_station": {"station": "pot1", "when_taken": "wait"}}, lib)]
+        env = quiet(ContinuousOrderEnv, DEFAULT_MENU, layout="open2_env", open_orders=2)
+        quiet(env.reset, 0)
+        twin = RulePlayer(rules, list(DEFAULT_MENU), "partner", "twin")
+        twin.reset(env.mdp, 1, 0)
+        twin.act(env.state, 0)
+        twin.rt.loaders["pot1"] = [("ego", "egg")]
+        twin.rt.busy_since["pot1"] = 0
+        k = twin.kitchen
+        orig = k.utensil_status
+        k.utensil_status = lambda state, u: ("loaded", None, ["egg"], 0) if u == "pot1" else orig(state, u)
+        try:
+            self.assertTrue(twin._taken_by_other("pot1"))
+            twin.rt.busy_since["pot1"] = -100                     # waited longer than the patience
+            self.assertFalse(twin._taken_by_other("pot1"))
+            twin.rt.busy_since["pot1"] = 0
+            twin.rt.loaders["pot1"] = [("partner", "egg")]        # its own batch: not a reason to wait
+            self.assertFalse(twin._taken_by_other("pot1"))
+        finally:
+            k.utensil_status = orig
+
+
 class ScoreValueScreenTests(unittest.TestCase):
     def test_card_screen_has_the_uninformed_ego(self):
         from coop.voi import card_screen
@@ -302,7 +384,10 @@ class ScoreValueScreenTests(unittest.TestCase):
         own = [v for v in variants if isinstance(v[0], dict) and "own_station" in v[0]]
         self.assertTrue(own and all(v[1]["own_station"]["station"][:-1] == v[0]["own_station"]["station"][:-1]
                                     for v in own))                    # opposite: the other station of that kind
-        self.assertIn(("waits_for_commit", None), variants)
+        self.assertIn(({"waits_for_commit": {"patience": "10"}}, None), variants)       # options included
+        self.assertIn(({"own_station": {"station": "pot1", "when_taken": "wait"}},
+                       {"own_station": {"station": "pot0", "when_taken": "wait"}}), variants)
+        self.assertIn(("on_takeover", None), variants)
         res = rule_screen("open2_env", [0, 1], 40, DEFAULT_MENU, 2, 2)
         self.assertEqual(len(res["rows"]), len(variants))
         row = next(r for r in res["rows"] if r["rule"] == "serves(who=ego)")

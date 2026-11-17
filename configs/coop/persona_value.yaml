@@ -1,0 +1,56 @@
+# Value check (2026-11-17): is knowing the partner worth points to the LLM ego?
+# oracle (told the card's "wants" lines) minus tom_struct (no knowledge), paired on the same
+# episodes, with the LLM persona partner on the revised cards (batch2). Score is the primary
+# outcome. One day of 4 episodes on the full menu per run; the run (card x seed) is the unit.
+#
+# Server: bash scripts/run_qwen38_days.sh configs/coop/persona_value.yaml --out outputs/persona_value_b2 --workers 48
+# Analyse: python -m coop.learning outputs/persona_value_b2   (interaction-episode contrasts)
+name: persona_value
+layout: open2_env
+menu: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 1
+episodes_per_day: 4
+order_lists: controlled
+ego_index: 0
+personas: [p1, p2, p3, p4]
+run_seeds: [0, 1, 2, 3, 4, 5, 6, 7]
+partner:
+  type: llm
+  cards: configs/coop/personas/batch2.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: false
+  tom: true
+  tom_mode: structured
+  max_tokens: 400
+  model_max_tokens: 1000
+conditions:
+  tom_struct: {memory: false}
+  oracle: {memory: false, oracle: true}
+reference_agent: {type: scripted, persona: steady}

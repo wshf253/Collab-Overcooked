@@ -1,0 +1,27 @@
+# Gate 1 on the revised cards (batch2: waiting variants, no handover_spot / wants_supplies).
+# Gate 1 with the rule-based twin (the predicate check: adherence should be >= 95%).
+# Scripted steady ego with each pilot card played by the LLM partner (and the neutral
+# partner: same model, no rules, the competence baseline). 4 cards x 4 seeds x 3 episodes.
+# Analyse with: python -m coop.persona_check gate1 outputs/gate1_llm [--twin outputs/gate1_twin]
+#
+# CPU: python -m coop.days configs/coop/persona_gate1_twin.yaml --out outputs/gate1_twin --workers 16
+name: persona_gate1_twin_batch2
+layout: open2_env
+menu: [boiled_egg, boiled_mushroom, boiled_corn_slices, baked_carrot_soup, sliced_eggplant_and_chickpea_stew]
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+days: 1
+episodes_per_day: 3
+ego_index: 0
+personas: [p1, p2, p3, p4, neutral]
+run_seeds: [0, 1, 2, 3]
+agent: {type: scripted, persona: steady}
+conditions:
+  steady_ego: {}
+reference_agent: null
+partner:
+  type: rule
+  cards: configs/coop/personas/batch2.yaml
+  complexity: 6

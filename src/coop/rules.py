@@ -20,6 +20,16 @@ SINGLE = {"order_priority", "serves", "wants_supplies", "handover_spot", "on_tak
           "waits_for_commit"}
 # Keys of a library entry that may carry a per-parameter variant suffix (text_self, ...).
 TEXT_FIELDS = ("text", "fallback", "wants", "reminder")
+# Optional parameters (the library lists them under ``options``); the first value is the
+# default. A default is not stored in the rule, so labels and texts of cards that do not set
+# the option are unchanged ("waits for its things" variants, 2026-11-17).
+OPTIONS: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    "own_station": {"when_taken": ("switch", "wait")},
+    "split_dish": {"patience": ("20", "40", "60")},
+    "serves": {"patience": ("20", "40", "60")},
+    "waits_for_commit": {"patience": ("5", "10")},
+}
+OWN_STATION_PATIENCE = 20     # own_station(when_taken=wait): use the other station after this many steps
 
 
 def _yaml(path: Path) -> Any:
@@ -43,6 +53,10 @@ class Rule:
     @property
     def p(self) -> Dict[str, str]:
         return dict(self.params)
+
+    def opt(self, name: str) -> str:
+        """An optional parameter's value (its default when the card does not set it)."""
+        return self.p.get(name, OPTIONS[self.id][name][0])
 
     def label(self) -> str:
         args = ", ".join(f"{k}={v}" for k, v in self.params)
@@ -80,12 +94,19 @@ def parse_rule(entry: Any, library: Dict[str, Dict[str, Any]]) -> Rule:
     if rid not in library:
         raise ValueError(f"unknown rule {rid!r}; library has {sorted(library)}")
     allowed = library[rid].get("params") or {}
-    if set(params) != set(allowed):
-        raise ValueError(f"rule {rid} takes parameters {sorted(allowed)}, got {sorted(params)}")
+    options = {k: [str(x) for x in v] for k, v in (library[rid].get("options") or {}).items()}
+    if options != {k: list(v) for k, v in OPTIONS.get(rid, {}).items()}:
+        raise ValueError(f"rule {rid}: library options {options} differ from coop.rules.OPTIONS")
+    required = set(allowed)
+    if not required <= set(params) or not set(params) <= required | set(options):
+        raise ValueError(f"rule {rid} takes parameters {sorted(allowed)} (optional: {sorted(options)}), "
+                         f"got {sorted(params)}")
     for k, v in params.items():
-        if v not in allowed[k]:
-            raise ValueError(f"rule {rid}: {k}={v!r} is not one of {allowed[k]}")
-    return Rule(rid, tuple(sorted((k, str(v)) for k, v in params.items())))
+        values = [str(x) for x in (allowed[k] if k in allowed else options[k])]
+        if str(v) not in values:
+            raise ValueError(f"rule {rid}: {k}={v!r} is not one of {values}")
+    kept = {k: str(v) for k, v in params.items() if not (k in options and str(v) == options[k][0])}
+    return Rule(rid, tuple(sorted(kept.items())))
 
 
 def check_rules(rules: List[Rule]) -> List[str]:
@@ -157,6 +178,10 @@ def _other_station(station: str, kitchen) -> str:
 
 def rule_vars(rule: Rule, kitchen=None, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     v = dict(rule.p)
+    for name, values in OPTIONS.get(rule.id, {}).items():
+        v.setdefault(name, values[0])
+    if rule.id == "own_station":
+        v["own_patience"] = str(OWN_STATION_PATIENCE)
     if "station" in v:
         v["kind"] = v["station"].rstrip("0123456789").replace("_", " ")
         v["other"] = _other_station(v["station"], kitchen) if kitchen is not None else "the other one"

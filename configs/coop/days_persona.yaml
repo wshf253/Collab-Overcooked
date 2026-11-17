@@ -38,7 +38,7 @@ personas: [p1, p2, p3, p4]
 run_seeds: [0, 1, 2, 3]
 partner:
   type: llm
-  cards: configs/coop/personas/batch1.yaml
+  cards: configs/coop/personas/batch2.yaml
   complexity: 6
   remind: true
   enforce: false

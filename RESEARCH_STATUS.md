@@ -241,6 +241,33 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.18 Revised cards: "waits for its things" (batch2, 2026-11-17)
+**User's choice:** the partner's habits should cost time when ignored, through waiting.
+Radius 2 is kept.
+
+**Built** (`docs/coop-setting.md`, "Optional parameters"):
+- optional rule parameters;
+- `own_station(when_taken=wait)`;
+- patience 40 for `split_dish` and `serves(ego)`;
+- `configs/coop/personas/batch2.yaml`: drops `handover_spot` and `wants_supplies`. batch1 is
+  kept unchanged; its texts and labels render identically.
+- **Twin on batch2:** 95–100% per card (full view), 93–97% (radius 2).
+
+**Twin results:**
+- **The waits do not create score headroom with scripted egos:**
+  - aligned − generic −4 ± 8 / −9 ± 4, aligned − uninformed −6 ± 8 / −7 ± 6 (radius 2; batch1:
+    −13 / −9);
+  - radius 1: +5 ± 12 / −17 ± 13, inconclusive.
+- **Single-rule screen:** the wait and patience variants change little (`outputs/rule_value_twin_v2.json`).
+- **Reason:** the scripted egos react to what they see. They start any loaded batch and serve
+  any ready food at once, so the long patience never comes into play. They rarely put work in
+  the partner's station: the twin waited 0–11 steps per 300-step episode (p3 and p4 most).
+
+**Reading.** Whether the waits matter depends on an ego that does not react like a script,
+i.e. the LLM ego. That is the value check (`configs/coop/persona_value.yaml`: `oracle` vs
+`tom_struct`, batch2), run together with Gate 1 on batch2. If `oracle` ≈ `tom_struct` there too,
+the options left are stronger consequences (no fallback) or the setting.
+
 ### 3.17 Gate 2 with the Qwen partner: no score headroom; Gate 1 final (2026-11-17)
 **Gate 1, re-scored with all check fixes:**
 - **Passes (judge seeds ≥ 75%):** every rule the partner can follow. This includes
@@ -665,10 +692,10 @@ ToM + memory consistently improves an LLM's teamwork with a stable simulated hum
 3. **A second model**, to check generality.
 0. **Design reference: `docs/PERSONA_PARTNER_PLAN_v2.md`** (dates and stop points not binding).
    Built: the persona partner and gate tools (§3.13), and the multi-day learning setup (§3.14).
-   Score is the primary outcome (§3.15). Next: Gate 1 (running), Gate 2 with the LLM partner,
-   and `oracle` vs `tom_struct` with the LLM ego (score value of knowing the partner). Then
-   either the pilot with `configs/coop/days_persona.yaml`, or first rules whose violation costs
-   score (§3.15).
+   Score is the primary outcome (§3.15). Gates 1 and 2 on batch1 are done (§3.16–3.17): the
+   partner is usable, and there is no score headroom. Revised cards (batch2, §3.18). Next:
+   Gate 1 on batch2 and the value check with the LLM ego (`persona_value.yaml`). Then the
+   pilot with `days_persona.yaml` (now batch2).
 4. **The real partner (decided 2026-11-13):** the scripted `SimulatedHuman` and its probe are a
    test harness for the pipeline, not the partner for the actual experiments. Don't refine the
    scripted personas or probe labels further. The experimental partner will be an LLM-simulated

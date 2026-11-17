@@ -193,7 +193,8 @@ def rule_variants(layout: str, menu: List[str]) -> List[Tuple[object, object]]:
     out = []
     for rid, spec in load_library().items():
         params = dict(spec.get("params") or {})
-        if not params:
+        options = {n: [str(x) for x in v] for n, v in (spec.get("options") or {}).items()}
+        if not params and not options:
             out.append((rid, None))
             continue
         allowed = {}
@@ -203,18 +204,22 @@ def rule_variants(layout: str, menu: List[str]) -> List[Tuple[object, object]]:
             elif name == "dish":
                 values = [v for v in values if v in menu]
             allowed[name] = list(values)
-        for combo in product(*allowed.values()):
-            p = dict(zip(allowed, combo))
+        names = list(allowed) + list(options)
+        for combo in product(*allowed.values(), *options.values()):
+            p = dict(zip(names, combo))
+            if rid == "serves" and p.get("who") == "self" and p.get("patience", options.get("patience", ["20"])[0]) \
+                    != options["patience"][0]:
+                continue            # patience only matters for serves(who=ego)
             opp = None
-            if len(p) == 1:
-                (name, v), = p.items()
+            if len(allowed) == 1:
+                (name, v), = [(n, p[n]) for n in allowed]
                 if name == "station":
                     others = [u for u in kinds[k.kind_of[v]] if u != v]
                 else:
                     others = [] if name == "dish" else [x for x in allowed[name] if x != v]
                 if others:
-                    opp = {rid: {name: others[0]}}
-            out.append(({rid: p}, opp))
+                    opp = {rid: dict(p, **{name: others[0]})}
+            out.append(({rid: p} if p else rid, opp))
     return out
 
 

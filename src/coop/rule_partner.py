@@ -22,7 +22,7 @@ from .partner import SimulatedHuman, Traits
 from .rule_eval import (COMMIT_WAIT, FALLBACK_WAIT, SUPPLY_WAIT, TAKEOVER_WINDOW, Tracker, is_takeover,
                         job_finishing, parse_events, partner_allows,
                         takeover_overridden)
-from .rules import Rule, counter_groups
+from .rules import OWN_STATION_PATIENCE, Rule, counter_groups
 
 Pos = Tuple[int, int]
 YIELD_PATIENCE = 5        # on_contention(yields): steps to give way before carrying on
@@ -115,7 +115,8 @@ class RulePlayer(SimulatedHuman):
         if self.mode != "partner" or "waits_for_commit" not in self.by_id or self.me.held_object is not None:
             return False
         now = self._now()
-        return any(0 <= now - o["t"] < COMMIT_WAIT and o.get("ego_t") is None and o.get("partner_free", True)
+        wait = int(self.by_id["waits_for_commit"].opt("patience"))
+        return any(0 <= now - o["t"] < wait and o.get("ego_t") is None and o.get("partner_free", True)
                    for o in self.rt.new_orders)
 
     def _supply_wait(self) -> Optional[Dict[str, Any]]:
@@ -260,11 +261,24 @@ class RulePlayer(SimulatedHuman):
         if self.mode == "partner":
             if own in openish:
                 return own, "open"
+            if r.opt("when_taken") == "wait" and self._taken_by_other(r.p["station"]):
+                return None, ""       # wait for its station (meanwhile: other work, or free it)
             return station, status
         rest = [p for p in openish if p != own]
         if station == own and rest:
             return rest[0], "open"
         return station, status
+
+    def _taken_by_other(self, station: str) -> bool:
+        """own_station(when_taken=wait): the other cook's batch is in my station, for less
+        than the patience."""
+        if self.rt is None:
+            return False
+        status = self.kitchen.utensil_status(self.state, station)[0]
+        if status == "empty" or self.rt.owner(station) == self.mode:
+            return False
+        since = self.rt.busy_since.get(station, self._now())
+        return self._now() - since < OWN_STATION_PATIENCE
 
     def _free_counters(self, shared: bool):
         free = super()._free_counters(shared)

@@ -613,6 +613,26 @@ The experimental partner. The scripted personas above remain as a test harness.
   and every category appears in ≥ 2 cards with different parameters (tested). The plan's
   example card combined `solo_dish` with `serves(ego)`, a contradiction under its own rule, so
   p1 does not.
+- **Optional parameters** (`options` in the library, defaults in `coop.rules.OPTIONS`). A
+  default is not stored in the rule, so cards that do not set an option keep their labels and
+  texts.
+  - `own_station(when_taken=wait)`: while the other cook's batch is in its station, the
+    partner waits for it, up to 20 steps, instead of moving its work to the other station. The
+    check counts using the other station during that wait as non-adherent.
+  - `split_dish(patience=20|40|60)` and `serves(who=ego, patience=20|40|60)`: how long the
+    steps it leaves to the other cook wait before it does them itself.
+  - `waits_for_commit(patience=5|10)`: how long it waits for the other cook to commit.
+- **Revised cards** (`configs/coop/personas/batch2.yaml`, 2026-11-17; "waits for its things",
+  for score as the primary outcome):
+  - dropped `handover_spot` (the put-down action cannot choose a counter) and `wants_supplies`
+    (too rare to measure);
+  - `own_station(when_taken=wait)` on every card;
+  - `split_dish` / `serves(ego)` with patience 40;
+  - p1, p2 and p4 have 5–6 rules, p3 has 4;
+  - no hand-over category any more.
+
+  Configs: `persona_gate1_batch2.yaml`, `persona_gate1_twin_batch2.yaml`, `persona_value.yaml`,
+  and `days_persona.yaml` (now batch2).
 
 **Shared priority** (in the partner's prompt, used by the twin, applied by the predicates):
 1. a valid action and no deadlock;
@@ -829,6 +849,11 @@ in the ego's view (Chebyshev distance ≤ view radius).
 - `dayDD/consolidation.json`;
 - `dayDD/knowledge_probe.json`;
 - `day00/` (before day 1).
+
+**Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
+the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day
+of 4 full-menu episodes, 4 cards × 8 seeds, batch2, LLM partner. Read the "interaction-episode
+score, condition minus tom_struct" block of `coop.learning`.
 
 **Learning curves** (`coop.learning OUT`). Score is the primary outcome and alignment the
 secondary one (decided 2026-11-17); the report prints them in that order.
