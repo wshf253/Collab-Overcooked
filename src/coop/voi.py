@@ -24,7 +24,7 @@ import json
 import statistics
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .partner import DEFAULT_PERSONAS, ORDER_PERSONAS, PERSONAS, Traits
 from .screen import DEFAULT_MENU, simulate
@@ -272,6 +272,155 @@ def format_rule_screen(res: Dict) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------- #
+# Gate 0 (docs/CONTEXT_PARTNER_PLAN_v3.md, section 7): does acting on a partner model pay?
+# ---------------------------------------------------------------------- #
+T975 = {1: 12.71, 2: 4.30, 3: 3.18, 4: 2.78, 5: 2.57, 6: 2.45, 7: 2.36, 8: 2.31, 9: 2.26, 10: 2.23, 11: 2.20,
+        12: 2.18, 13: 2.16, 14: 2.14, 15: 2.13, 16: 2.12, 17: 2.11, 18: 2.10, 19: 2.09, 20: 2.09, 25: 2.06, 30: 2.04}
+REACTIVE = ["steady", "always_take_urgent", "never_take_urgent", "wait_and_see:3", "wait_and_see:6", "wait_and_see:10"]
+
+
+def paired_ci(xs: List[float]) -> Dict:
+    n = len(xs)
+    m = statistics.fmean(xs) if xs else None
+    if n < 2:
+        return {"mean": m, "se": None, "lo": None, "hi": None, "n": n}
+    se = statistics.stdev(xs) / n ** 0.5
+    t = T975.get(n - 1) or T975[max(k for k in T975 if k <= n - 1)] if n - 1 <= 30 else 1.96
+    return {"mean": m, "se": se, "lo": m - t * se, "hi": m + t * se, "n": n}
+
+
+def _ctx_ego(name: str, cards, card: str, menu):
+    from .context_partner import ContextPlayer
+    from .partner import SimulatedHuman
+    if name == "steady":
+        return SimulatedHuman(PERSONAS["steady"], "steady")
+    if name in ("proactive", "mismatched"):
+        names = sorted(cards)
+        other = next((c for c in names if c != card), card) if name == "mismatched" else card
+        if isinstance(cards[other], list):
+            return ContextPlayer(cards[other], menu, "ego", "proactive", name=name)
+        return ContextPlayer(cards[other].rules, menu, "ego", "proactive", name=name)
+    if name.startswith("wait_and_see:"):
+        return ContextPlayer([], menu, "ego", "wait_and_see", k=int(name.split(":")[1]), name=name)
+    return ContextPlayer([], menu, "ego", name, name=name)
+
+
+def _ctx_job(arg):
+    from .persona_check import play_rule_episode
+    from .rules import load_cards
+    card_path, card, ego, seed, menu, layout, horizon, view_radius, open_orders, deadlines, opposite = arg
+    if card_path is None:                    # single-rule screen: (rule, opposite rule) passed in
+        cards = {"own": [card], "opposite": [opposite]}
+        rules, key = [card], "own"
+    else:
+        cards = {n: c for n, c in load_cards(card_path).items() if n != "neutral"}
+        rules, key = cards[card].rules, card
+    player = _ctx_ego(ego, cards, key, list(menu))
+    r = play_rule_episode(list(menu), layout, horizon, seed, rules, player, view_radius, open_orders,
+                          deadlines=deadlines, order_mode="controlled")
+    return {"score": r["score"], "completed": r["orders_completed"], "expired": r["orders_expired"],
+            "guards": r["guards"]}
+
+
+def gate0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calibrate: List[int], judge: List[int],
+          horizon: int = 300, view_radius=2, open_orders: int = 2, workers: int = 1, guard_factor: float = 2.0) -> Dict:
+    """Crossover of scripted egos x context cards with the twin (no LLM)."""
+    from multiprocessing import Pool
+    from .rules import load_cards
+    cards = [n for n in load_cards(cards_path) if n != "neutral"]
+    egos = ["proactive", "mismatched"] + REACTIVE
+    seeds = list(calibrate) + list(judge)
+    jobs = [(str(cards_path), c, e, s, list(menu), layout, horizon, view_radius, open_orders, deadlines, None)
+            for c in cards for e in egos for s in seeds]
+    if workers > 1:
+        with Pool(workers) as pool:
+            res = pool.map(_ctx_job, jobs, chunksize=2)
+    else:
+        res = [_ctx_job(j) for j in jobs]
+    got = {(j[1], j[2], j[3]): r for j, r in zip(jobs, res)}
+    mean = lambda c, e, ss, k: statistics.fmean(got[(c, e, s)][k] for s in ss)
+    out: Dict[str, Any] = {"cards": cards, "egos": egos, "calibrate": list(calibrate), "judge": list(judge),
+                           "deadlines": deadlines, "view_radius": view_radius, "layout": layout, "menu": list(menu),
+                           "table": {}, "cards_result": {}}
+    for c in cards:
+        for e in egos:
+            out["table"][f"{c}|{e}"] = {k: mean(c, e, judge, k) for k in ("score", "completed", "expired", "guards")}
+        best = max(REACTIVE, key=lambda e: mean(c, e, calibrate, "score"))
+        bar = max(0.5, guard_factor * mean(c, "proactive", calibrate, "guards"))
+        d_best = paired_ci([got[(c, "proactive", s)]["score"] - got[(c, best, s)]["score"] for s in judge])
+        d_mis = paired_ci([got[(c, "proactive", s)]["score"] - got[(c, "mismatched", s)]["score"] for s in judge])
+        guards = mean(c, "proactive", judge, "guards")
+        out["cards_result"][c] = {"best_reactive": best, "proactive_minus_best_reactive": d_best,
+                                  "proactive_minus_mismatched": d_mis, "guard_bar": bar, "proactive_guards": guards,
+                                  "pass": bool(d_best["lo"] is not None and d_best["lo"] > 0 and guards <= bar)}
+    out["pass"] = all(r["pass"] for r in out["cards_result"].values())
+    return out
+
+
+def context_rule_screen(layout: str, menu: List[str], deadlines: Dict, seeds: List[int], horizon: int = 300,
+                        view_radius=2, open_orders: int = 2, workers: int = 1) -> Dict:
+    """Value of each context rule alone: twin with that rule only; proactive ego for it vs steady
+    and vs the opposite mode."""
+    from multiprocessing import Pool
+    from .rules import load_library, parse_rule
+    lib = load_library()
+    opp = {"prep": "whole", "whole": "prep", "takes": "keeps", "keeps": "takes", "clears": "waits",
+           "waits": "clears", "switches": "continues", "continues": "switches"}
+    specs = []
+    for rid in ("default_work", "on_urgent", "on_blocked", "on_prep_ready"):
+        for mode in lib[rid]["params"]["mode"]:
+            variants = [{"mode": mode}] + ([{"mode": mode, "unless_ego_on_it": "yes"}] if rid == "on_urgent" and mode == "takes" else [])
+            for v in variants:
+                specs.append((parse_rule({rid: v}, lib), parse_rule({rid: {"mode": opp[mode]}}, lib)))
+    jobs = [(None, r, e, s, list(menu), layout, horizon, view_radius, open_orders, deadlines, o)
+            for r, o in specs for e in ("proactive", "mismatched", "steady") for s in seeds]
+    if workers > 1:
+        with Pool(workers) as pool:
+            res = pool.map(_ctx_job, jobs, chunksize=2)
+    else:
+        res = [_ctx_job(j) for j in jobs]
+    got = {(j[1].label(), j[2], j[3]): r for j, r in zip(jobs, res)}
+    rows = []
+    for r, _ in specs:
+        lab = r.label()
+        sc = lambda e: [got[(lab, e, s)]["score"] for s in seeds]
+        rows.append({"rule": lab, "steady": statistics.fmean(sc("steady")),
+                     "proactive-steady": paired_ci([a - b for a, b in zip(sc("proactive"), sc("steady"))]),
+                     "proactive-opposite": paired_ci([a - b for a, b in zip(sc("proactive"), sc("mismatched"))]),
+                     "guards_proactive": statistics.fmean(got[(lab, "proactive", s)]["guards"] for s in seeds)})
+    return {"rows": rows, "seeds": list(seeds), "deadlines": deadlines}
+
+
+def format_gate0(res: Dict) -> str:
+    f = lambda d: "-" if d.get("mean") is None else (f"{d['mean']:+.1f}" + (f" [{d['lo']:+.1f}, {d['hi']:+.1f}]" if d.get("lo") is not None else ""))
+    lines = [f"== Gate 0: {res['layout']}, menu {res['menu']}, radius {res['view_radius']}, deadlines {res['deadlines']}",
+             f"calibration seeds {res['calibrate']}, judge seeds {res['judge']} (table: judge seeds, mean per episode)",
+             f"{'ego':<22}" + "".join(f"{c + ' score':>12}{'expired':>9}{'guards':>8}" for c in res["cards"])]
+    for e in res["egos"]:
+        row = f"{e:<22}"
+        for c in res["cards"]:
+            t = res["table"][f"{c}|{e}"]
+            row += f"{t['score']:>12.1f}{t['expired']:>9.2f}{t['guards']:>8.2f}"
+        lines.append(row)
+    for c, r in res["cards_result"].items():
+        lines.append(f"card {c}: best reactive (calibration) {r['best_reactive']}; proactive - best reactive "
+                     f"{f(r['proactive_minus_best_reactive'])}; proactive - mismatched {f(r['proactive_minus_mismatched'])}; "
+                     f"guards {r['proactive_guards']:.2f} (bar {r['guard_bar']:.2f}) -> {'PASS' if r['pass'] else 'fail'}")
+    lines.append(f"Gate 0: {'PASS' if res['pass'] else 'FAIL'}")
+    return "\n".join(lines)
+
+
+def format_context_rules(res: Dict) -> str:
+    f = lambda d: "-" if d.get("mean") is None else f"{d['mean']:+.1f}±{d['se']:.1f}"
+    lines = [f"value of each context rule alone (twin with that rule; seeds {res['seeds']})",
+             f"{'rule':<48}{'steady':>8}{'proactive-steady':>18}{'proactive-opposite':>20}{'guards':>8}"]
+    for r in res["rows"]:
+        lines.append(f"{r['rule']:<48}{r['steady']:>8.1f}{f(r['proactive-steady']):>18}{f(r['proactive-opposite']):>20}"
+                     f"{r['guards_proactive']:>8.2f}")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--layout", default="open_env")
@@ -291,9 +440,31 @@ def main(argv=None):
     ap.add_argument("--complexity", type=int, default=None, help="--cards: active rules per card (default all)")
     ap.add_argument("--rules", action="store_true",
                     help="score value of knowing each library rule alone (twin with one rule; see rule_screen)")
-    ap.add_argument("--workers", type=int, default=1, help="--rules: parallel episodes")
+    ap.add_argument("--workers", type=int, default=1, help="--rules / --gate0: parallel episodes")
+    ap.add_argument("--gate0", type=Path, help="plan v3 Gate 0: context cards (e.g. configs/coop/personas/batch_ctx.yaml)")
+    ap.add_argument("--context-rules", action="store_true", help="plan v3: value of each context rule alone")
+    ap.add_argument("--slack", type=float, default=1.5, help="--gate0: order timer slack")
+    ap.add_argument("--reference", type=str, help="--gate0: JSON {dish: reference steps} (coop.deadlines)")
+    ap.add_argument("--urgent-steps", type=int, default=15, help="--gate0: theta, steps left that make an order urgent")
+    ap.add_argument("--expiry-penalty", type=float, default=20)
     ap.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
+    if args.gate0 or args.context_rules:
+        dl = {"slack": args.slack, "reference": json.loads(args.reference), "urgent_steps": args.urgent_steps,
+              "expiry_penalty": args.expiry_penalty}
+        if args.gate0:
+            res = gate0(args.gate0, args.layout, args.menu, dl, args.seeds, args.eval_seeds, args.horizon,
+                        args.view_radius, args.open_orders, args.workers)
+            print(format_gate0(res))
+        else:
+            res = context_rule_screen(args.layout, args.menu, dl, args.seeds, args.horizon, args.view_radius,
+                                      args.open_orders, args.workers)
+            print(format_context_rules(res))
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(res, indent=1, default=str))
+            print(f"wrote {args.out}")
+        return
     if args.rules:
         res = rule_screen(args.layout, args.seeds, args.horizon, args.menu, args.view_radius, args.open_orders,
                           args.workers)

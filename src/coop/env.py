@@ -144,6 +144,7 @@ class ContinuousOrderEnv:
             if float(self.deadlines.get("slack", 0)) <= 0:
                 raise ValueError("deadlines.slack must be > 0")
             self.deadlines.setdefault("expiry_penalty", 20)
+            self.deadlines.setdefault("urgent_steps", 10)
         if horizon < 1:
             raise ValueError("horizon must be >= 1")
         if wrong_delivery_penalty < 0:
@@ -152,6 +153,8 @@ class ContinuousOrderEnv:
         # Optional layout key "dispensers": {ingredient: [x, y]}: each ingredient dispenser
         # gives only its own ingredient (enforced by the interaction check below). Layouts
         # without it keep the original behaviour: any dispenser gives any raw ingredient.
+        # theta of the context feature "urgent" (plan v3, 3.2), shared by players and checks
+        self.mdp.urgent_steps = int(self.deadlines["urgent_steps"]) if self.deadlines is not None else None
         self.mdp.dispensers = {}
         for ingredient, pos in (read_layout_dict(layout).get("dispensers") or {}).items():
             pos = tuple(pos)

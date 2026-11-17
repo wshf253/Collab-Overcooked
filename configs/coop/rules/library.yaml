@@ -112,5 +112,51 @@ waits_for_commit:
   wants: "Commit to a new order quickly; don't wait for me."
   reminder: "A new order just came in: wait a few steps to see what your partner starts."
 
+# Context rules (docs/CONTEXT_PARTNER_PLAN_v3.md, section 4): what the partner DOES in a
+# context. No fallback: the partner does what its mode says whatever the other cook does (a
+# global deadlock guard in the runner is not part of the persona). Every "wants" line is an
+# action for the other cook. Contexts are dish-agnostic; {dish} / {kind} / {order} in reminders
+# are filled with the current instance.
+default_work:
+  category: context
+  params: {mode: [prep, whole]}
+  text_prep: "Your job is preparation: you fetch ingredients and cut or blend them for the open orders. You do not cook (pots and ovens) and you do not plate or serve. A raw ingredient that goes straight into a pot or oven you put on a counter for your partner."
+  wants_prep: "Cook and serve what I prepare: take my prepared items and the raw ingredients I put on the counters into the pots and ovens, then plate and deliver."
+  reminder_prep: "You prepare; cooking, plating and serving are your partner's part."
+  text_whole: "You take one order and do it yourself from start to finish: every ingredient, every step, the plating and the delivery. You take the oldest open order your partner is not working on and stay with it until it is served. You do not work on the other order."
+  wants_whole: "Take the other open order and do it from start to finish; I do mine."
+  reminder_whole: "Stay with your own order ({order}) until it is served."
+
+on_urgent:
+  category: context
+  params: {mode: [takes, keeps]}
+  options: {unless_ego_on_it: ["no", "yes"]}
+  text_takes: "When an order is about to expire (its timer is low), you drop what you are doing and finish that order yourself{unless}."
+  wants_takes: "When an order becomes urgent, I take it{unless_wants}; you keep going and prepare the next order."
+  reminder_takes: "{dish} is about to expire: drop what you are doing and finish it{unless}."
+  text_keeps: "When an order is about to expire, you carry on with your own work; you never switch to the urgent order."
+  wants_keeps: "When an order becomes urgent and I am on my own work, take the urgent order yourself."
+  reminder_keeps: "{dish} is about to expire: carry on with your own work."
+
+on_blocked:
+  category: context
+  params: {mode: [clears, waits]}
+  text_clears: "When every utensil of a kind you need is busy (running, or holding finished food nobody has taken), you take the finished food out and move it on, plate or serve it, to free a utensil."
+  wants_clears: "When all utensils of a kind are full, I clear one; you do other work."
+  reminder_clears: "Every {kind} is busy: take the finished food out to free one."
+  text_waits: "When every utensil of a kind you need is busy, you do other work that does not need it. You never clear a full utensil."
+  wants_waits: "When all utensils of a kind are full, clear one yourself; I won't."
+  reminder_waits: "Every {kind} is busy: do other work; do not clear it."
+
+on_prep_ready:
+  category: context
+  params: {mode: [switches, continues]}
+  text_switches: "When prepared items (cut or blended) are waiting for an open order, you switch to cooking and serving them."
+  wants_switches: "When prepared items are waiting, I cook and serve them; you keep preparing."
+  reminder_switches: "Prepared items for {dish} are waiting: cook and serve them."
+  text_continues: "When prepared items are waiting, you keep preparing; cooking them is not your part."
+  wants_continues: "When prepared items are waiting, cook and serve them."
+  reminder_continues: "Prepared items for {dish} are waiting: keep preparing."
+
 # Counter groups (by position across the kitchen, computed from the layout):
 # left = x in the left third, center = middle third, right = right third.

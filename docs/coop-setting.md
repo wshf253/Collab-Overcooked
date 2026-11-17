@@ -932,6 +932,40 @@ loaded. Starting the utensil then throws the whole batch away. So duplication is
 mismatch cost, a lost batch. The scripted players re-check and put the item down instead.
 Executor behaviour is unchanged.
 
+**Context rules and cards** (plan v3, sections 4–6):
+- **Library entries** (category `context`): `default_work(prep|whole)`, `on_urgent(takes|keeps,
+  unless_ego_on_it)`, `on_blocked(clears|waits)`, `on_prep_ready(switches|continues)`.
+  - They have no fallbacks.
+  - Every `wants` line is an action for the ego.
+  - Cards `configs/coop/personas/batch_ctx.yaml`: pilot A and B, opposite on every rule.
+- **"Prepared items waiting"** counts an item only after it has lain unused for 5 steps
+  (`coop.context.PREP_WAIT`). Otherwise a cook coming back for what it just cut triggers it.
+- **`coop.context_partner.ContextPlayer`**, deciding on its own view. Its table of how each
+  mode acts on jobs is in the module docstring.
+  - **Twin** (`policy: card`): follows its card. It has one global deadlock guard: after 30
+    steps without any completed interaction it does the next needed step once, and logs it as
+    `guard`.
+  - **Scripted egos:** `proactive` (does the card's `wants`), `mismatched` (the other card's),
+    `always_take_urgent`, `never_take_urgent`, and `wait_and_see(k)`.
+  - A `whole` cook only uses its own items.
+- **Checks** (`coop.context_eval.ContextRules`). One checker per card, because card order
+  decides. Each choice is judged in the context its chooser saw, in its own view, at the step
+  it decided. The evaluator keeps each player's view, context history and (for the partner) a
+  view-based tracker.
+  - **Twin adherence**, radius 2, 8 seeds: card A 96–97%, card B 98–100%.
+
+**Gate 0** (`python -m coop.voi --gate0 CARDS ...`). The crossover table (ego × card: score,
+expired orders, guard firings) on the judge seeds. Then, per card:
+- the best reactive ego, chosen on the calibration seeds;
+- proactive − best reactive and proactive − mismatched, with paired 95% intervals;
+- the guard rate against a bar set on the calibration seeds.
+
+`--context-rules` gives the value of each context rule alone.
+
+```bash
+python -m coop.voi --gate0 configs/coop/personas/batch_ctx.yaml --layout open_ing2_env --menu boiled_potato_slices baked_carrot_soup sliced_carrot_and_potato_stew --open-orders 2 --view-radius 2 --slack 1.5 --urgent-steps 15 --reference '{"boiled_potato_slices": 54, "baked_carrot_soup": 64, "sliced_carrot_and_potato_stew": 65}' --seeds 0 1 2 3 4 5 6 7 --eval-seeds 8 9 10 11 12 13 14 15 --workers 8 --out outputs/gate0_base.json
+```
+
 **Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
 the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day
 of 4 full-menu episodes, 4 cards × 8 seeds, batch2, LLM partner. Read the "interaction-episode

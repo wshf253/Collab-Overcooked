@@ -1,0 +1,196 @@
+"""Checks for the context rules (docs/CONTEXT_PARTNER_PLAN_v3.md, section 4).
+
+One checker covers all context rules of a card, because card order decides which rule governs
+a decision. Every judgment is about a *choice* (an action started with empty hands; for the
+partner also loading a pot or oven), judged in the context the chooser saw **in its own view
+at the step it decided** (``Ctx.decided``; the evaluator keeps each player's view and context
+history, ``RuleEvaluator.ctx_hist``).
+
+partner (adherent), at a decision where:
+
+* an "only" rule's context holds (first in card order): ``on_urgent(takes)`` (urgent order,
+  not exempt) -> the choice serves the urgent order; ``on_blocked(clears)`` -> it takes
+  finished food out of a blocked kind; ``on_prep_ready(switches)`` -> it cooks / serves a dish
+  whose prepared items wait;
+* otherwise, every rule whose context holds is judged: ``keeps`` -> it does not switch to
+  cooking or serving the urgent order (unless that is its own order); ``waits`` -> it neither
+  clears nor uses a blocked kind; ``continues`` -> it does not cook a dish whose prepared items
+  wait; and with no context at all, ``default_work``: ``prep`` -> a prep step (fetch from a
+  dispenser, load or start a board or blender); ``whole`` -> it serves its own order.
+
+ego (aligned), with the first rule (card order) whose context holds, else ``default_work``:
+the complement of the partner's mode (the card's ``wants`` line), e.g. ``takes`` -> it does not
+serve the urgent order (unless it is already on it, with ``unless_ego_on_it: yes``), ``keeps``
+-> it serves the urgent order; ``prep`` -> no prep step; ``whole`` -> it does not serve the
+partner's order.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from .context import open_dishes, tree
+from .rule_eval import Check, Event, Judgment
+from .rules import CONTEXT_RULE_IDS, Rule, render
+
+PREP_KINDS = {"chopping_board", "blender"}
+COOK_KINDS = {"pot", "oven"}
+EMPTY = {"urgent": [], "blocked": [], "prep_ready": []}
+
+
+class ContextRules(Check):
+    def __init__(self, rules: List[Rule], library, kitchen):
+        self.rules = [r for r in rules if r.id in CONTEXT_RULE_IDS]
+        self.lib, self.k = library, kitchen
+        self.rule = self.rules[0] if self.rules else None
+        self.label = "context"
+        self.by_id = {r.id: r for r in self.rules}
+        self.own: Optional[str] = None      # default_work(whole): the order the partner took
+
+    # -- event classes -----------------------------------------------------
+    def kind(self, u: Optional[str]) -> Optional[str]:
+        return self.k.kind_of.get(u) if u else None
+
+    def prep_step(self, ev: Event) -> bool:
+        return (ev.verb == "pickup" and ev.source == "ingredient_dispenser") or \
+            (ev.verb in ("start", "put") and self.kind(ev.utensil) in PREP_KINDS)
+
+    def clearing(self, ev: Event, kinds: List[str]) -> bool:
+        return ev.verb in ("pickup", "fill") and self.kind(ev.utensil) in kinds
+
+    def uses_kind(self, ev: Event, kinds: List[str]) -> bool:
+        return ev.verb in ("put", "start") and self.kind(ev.utensil) in kinds
+
+    @staticmethod
+    def serves(ev: Event, dish: Optional[str]) -> bool:
+        return dish is not None and dish in ev.dishes
+
+    def cook_of(self, ev: Event, dishes: List[str]) -> bool:
+        return any(d in ev.dishes for d in dishes) and not self.prep_step(ev)
+
+    # -- context at the decision ---------------------------------------------
+    def features(self, ctx, who: str) -> Dict[str, Any]:
+        hist = (getattr(ctx, "ctx_hist", None) or {}).get(who) or {}
+        d = ctx.decided(who)
+        if not hist:
+            return dict(EMPTY, open=open_dishes(ctx.pre, ctx.tr.n_open))
+        key = max((s for s in hist if s <= d), default=None)
+        f = dict(hist[key] if key is not None else hist[min(hist)])
+        dishes = f.get("open") or open_dishes(ctx.pre, ctx.tr.n_open)
+        need = {self.k.recipes[x][0] for dd in dishes for x in tree(self.k, dd) if x in self.k.recipes}
+        f["blocked"] = [k for k in f["blocked"] if k in need]
+        f["urgent"] = [d for _, d in f["urgent"]] if f["urgent"] and isinstance(f["urgent"][0], tuple) else f["urgent"]
+        return f
+
+    def J(self, ctx, rule: Rule, side: str, value: bool, note: str) -> Judgment:
+        return Judgment(ctx.t, rule.label(), side, bool(value), note)
+
+    # -- judging -----------------------------------------------------------------
+    @staticmethod
+    def decision(ev: Event) -> bool:
+        """A choice of work: started with empty hands (a dish pickup only says that something
+        will be plated, so the plating itself, ``fill``, is judged instead)."""
+        return (ev.choice and ev.item != "dish") or ev.verb == "fill"
+
+    def _job_kind(self, j) -> Optional[str]:
+        return self.k.kind_of.get(self.k.utensil_at.get(tuple(j.pos))) if j.pos is not None else None
+
+    def _available(self, ctx, rule_id: str, f) -> bool:
+        """Did the partner have a job the "only" rule names? If not it acts on its next rule,
+        as the twin does."""
+        if rule_id == "on_urgent":
+            return ctx.has_job("partner", lambda j, ds: f["urgent"][0] in ds)
+        if rule_id == "on_blocked":
+            return ctx.has_job("partner", lambda j, ds: self._job_kind(j) in f["blocked"]
+                               and j.kind in ("bring", "plate", "unload", "clear", "supply_dish"))
+        return ctx.has_job("partner", lambda j, ds: any(d in ds for d in f["prep_ready"]) and j.stage != "prep")
+
+    def judge(self, ctx) -> List[Judgment]:
+        if not self.rules:
+            return []
+        out: List[Judgment] = []
+        if "default_work" in self.by_id and self.by_id["default_work"].p["mode"] == "whole":
+            self._update_own(ctx)
+        for ev in ctx.events:
+            prep = "default_work" in self.by_id and self.by_id["default_work"].p["mode"] == "prep"
+            if ev.who == "partner" and (self.decision(ev) or (prep and ev.verb == "put" and self.kind(ev.utensil) in COOK_KINDS)):
+                out += self._partner(ctx, ev)
+            elif ev.who == "ego" and self.decision(ev):
+                out += self._ego(ctx, ev)
+        return out
+
+    def _update_own(self, ctx) -> None:
+        """default_work(whole), every step: when its order has closed, the partner takes the
+        oldest open order the ego is not working on, as its own view shows it (what the rule
+        prescribes, and what the twin does)."""
+        h = (getattr(ctx, "ctx_hist", None) or {}).get("partner", {}).get(ctx.t)
+        if h is None:
+            return
+        open_ = h.get("open") or []
+        if self.own not in open_:
+            cands = [d for d in open_ if d != h.get("other_on")] or list(open_)
+            self.own = cands[0] if cands else None
+
+    def _partner(self, ctx, ev: Event) -> List[Judgment]:
+        f = self.features(ctx, "partner")
+        U, B, P = f["urgent"], f["blocked"], f["prep_ready"]
+        whole = "default_work" in self.by_id and self.by_id["default_work"].p["mode"] == "whole"
+        mine = self.own if whole and self.own in f["open"] else None
+        ego_on = ctx.tr.order_of.get("ego")
+        what = f"{ev.verb} {ev.item} at {ev.target}"
+        for r in self.rules:
+            m = r.p.get("mode")
+            if r.id == "on_urgent" and U and m == "takes" and not (r.opt("unless_ego_on_it") == "yes" and ego_on == U[0]) \
+                    and self._available(ctx, r.id, f):
+                return [self.J(ctx, r, "partner", self.serves(ev, U[0]), f"{what} (urgent {U[0]})")]
+            if r.id == "on_blocked" and B and m == "clears" and self._available(ctx, r.id, f):
+                return [self.J(ctx, r, "partner", self.clearing(ev, B), f"{what} (blocked {', '.join(B)})")]
+            if r.id == "on_prep_ready" and P and m == "switches" and self._available(ctx, r.id, f):
+                return [self.J(ctx, r, "partner", self.cook_of(ev, P), f"{what} (prepared items for {', '.join(P)})")]
+        out = []
+        for r in self.rules:
+            m = r.p.get("mode")
+            if r.id == "on_urgent" and U:                 # keeps (or takes while the ego is on it)
+                bad = self.serves(ev, U[0]) and not self.prep_step(ev) and U[0] != mine
+                out.append(self.J(ctx, r, "partner", not bad, f"{what} (urgent {U[0]})"))
+            elif r.id == "on_blocked" and B:              # waits
+                bad = self.clearing(ev, B) or self.uses_kind(ev, B)
+                out.append(self.J(ctx, r, "partner", not bad, f"{what} (blocked {', '.join(B)})"))
+            elif r.id == "on_prep_ready" and P:           # continues
+                out.append(self.J(ctx, r, "partner", not self.cook_of(ev, P), f"{what} (prepared items for {', '.join(P)})"))
+        if not (U or B or P) and "default_work" in self.by_id:
+            r = self.by_id["default_work"]
+            if r.p["mode"] == "prep":
+                out.append(self.J(ctx, r, "partner", self.prep_step(ev), what))
+            else:
+                out.append(self.J(ctx, r, "partner", mine is None or self.serves(ev, mine), f"{what} (own order {mine})"))
+        return out
+
+    def _ego(self, ctx, ev: Event) -> List[Judgment]:
+        f = self.features(ctx, "ego")
+        U, B, P = f["urgent"], f["blocked"], f["prep_ready"]
+        what = f"{ev.verb} {ev.item} at {ev.target}"
+        for r in self.rules:
+            m = r.p.get("mode")
+            if r.id == "on_urgent" and U:
+                u = U[0]
+                if m == "keeps":
+                    return [self.J(ctx, r, "ego", self.serves(ev, u), f"{what} (urgent {u})")]
+                on_it = r.opt("unless_ego_on_it") == "yes" and ctx.tr.order_of.get("ego") == u
+                return [self.J(ctx, r, "ego", self.serves(ev, u) == on_it, f"{what} (urgent {u})")]
+            if r.id == "on_blocked" and B:
+                return [self.J(ctx, r, "ego", self.clearing(ev, B) == (m == "waits"), f"{what} (blocked {', '.join(B)})")]
+            if r.id == "on_prep_ready" and P:
+                return [self.J(ctx, r, "ego", self.cook_of(ev, P) == (m == "continues"),
+                               f"{what} (prepared items for {', '.join(P)})")]
+        r = self.by_id.get("default_work")
+        if r is None:
+            return []
+        if r.p["mode"] == "prep":
+            return [self.J(ctx, r, "ego", not self.prep_step(ev), what)]
+        theirs = self.own if self.own in f["open"] else None
+        ok = theirs is None or not self.serves(ev, theirs)
+        return [self.J(ctx, r, "ego", ok, f"{what} (partner's order {theirs})")]
+
+    # -- reminders (LLM partner, plan v3 W4) --------------------------------------
+    def opportunity(self, view, tracker, me, target=None):
+        return None

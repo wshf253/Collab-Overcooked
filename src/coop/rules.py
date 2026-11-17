@@ -14,10 +14,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[2]
 LIBRARY_PATH = REPO / "configs" / "coop" / "rules" / "library.yaml"
-CATEGORIES = ("station", "dish", "order", "stage", "hand-over", "reaction", "initiative")
+CATEGORIES = ("station", "dish", "order", "stage", "hand-over", "reaction", "initiative", "context")
 # Rules that may appear at most once per card (own_station: once per station kind).
 SINGLE = {"order_priority", "serves", "wants_supplies", "handover_spot", "on_takeover", "on_contention",
-          "waits_for_commit"}
+          "waits_for_commit", "default_work", "on_urgent", "on_blocked", "on_prep_ready"}
+# Context rules (docs/CONTEXT_PARTNER_PLAN_v3.md, 4): what the partner does in a context, no fallback.
+CONTEXT_RULE_IDS = ("default_work", "on_urgent", "on_blocked", "on_prep_ready")
 # Keys of a library entry that may carry a per-parameter variant suffix (text_self, ...).
 TEXT_FIELDS = ("text", "fallback", "wants", "reminder")
 # Optional parameters (the library lists them under ``options``); the first value is the
@@ -28,6 +30,7 @@ OPTIONS: Dict[str, Dict[str, Tuple[str, ...]]] = {
     "split_dish": {"patience": ("20", "40", "60")},
     "serves": {"patience": ("20", "40", "60")},
     "waits_for_commit": {"patience": ("5", "10")},
+    "on_urgent": {"unless_ego_on_it": ("no", "yes")},
 }
 OWN_STATION_PATIENCE = 20     # own_station(when_taken=wait): use the other station after this many steps
 
@@ -182,6 +185,10 @@ def rule_vars(rule: Rule, kitchen=None, extra: Optional[Dict[str, str]] = None) 
         v.setdefault(name, values[0])
     if rule.id == "own_station":
         v["own_patience"] = str(OWN_STATION_PATIENCE)
+    if rule.id == "on_urgent":
+        yes = v.get("unless_ego_on_it") == "yes"
+        v["unless"] = ", unless your partner is already working on it" if yes else ""
+        v["unless_wants"] = " (unless you are already on it: then you finish it and I keep going)" if yes else ""
     if "station" in v:
         v["kind"] = v["station"].rstrip("0123456789").replace("_", " ")
         v["other"] = _other_station(v["station"], kitchen) if kitchen is not None else "the other one"

@@ -566,7 +566,8 @@ if __name__ == "__main__":
 # Direct simulation with scripted players (no runner, no files): used by coop.voi --cards
 # ---------------------------------------------------------------------- #
 def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules, ego_player,
-                      view_radius=None, open_orders: int = 1, ego_index: int = 0) -> Dict[str, Any]:
+                      view_radius=None, open_orders: int = 1, ego_index: int = 0,
+                      deadlines=None, order_mode: str = "random") -> Dict[str, Any]:
     """One episode: ``ego_player`` (a SimulatedHuman or RulePlayer in ego mode) with the
     rule-based twin of ``partner_rules``; returns the score and the rule summary."""
     import contextlib
@@ -576,15 +577,22 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
     from .rule_eval import RuleEvaluator, decided_at, intent_target
     from .rule_partner import RulePlayer
     from .rules import load_library
-    env = ContinuousOrderEnv(menu, layout=layout, horizon=horizon, open_orders=open_orders)
+    env = ContinuousOrderEnv(menu, layout=layout, horizon=horizon, open_orders=open_orders,
+                             deadlines=deadlines, order_mode=order_mode)
     with contextlib.redirect_stdout(io.StringIO()):
         start = env.reset(seed)
     other = 1 - ego_index
-    partner = RulePlayer(partner_rules, list(menu), "partner", "twin")
+    from .rules import CONTEXT_RULE_IDS
+    if any(r.id in CONTEXT_RULE_IDS for r in partner_rules):
+        from .context_partner import ContextPlayer
+        partner = ContextPlayer(partner_rules, list(menu), "partner", "card", name="twin")
+    else:
+        partner = RulePlayer(partner_rules, list(menu), "partner", "twin")
     ego_player.reset(env.mdp, ego_index, seed, view_radius=view_radius)
     partner.reset(env.mdp, other, seed, view_radius=view_radius)
     k = Kitchen(env.mdp, ego_index, start)
-    ev = RuleEvaluator(partner_rules, load_library(), k, list(menu), ego_index, other, open_orders, env.mdp)
+    ev = RuleEvaluator(partner_rules, load_library(), k, list(menu), ego_index, other, open_orders, env.mdp,
+                       view_radius=view_radius)
     while not env.done:
         t, pre = env.t, env.state
         moves = [None, None]
@@ -595,4 +603,7 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
         with contextlib.redirect_stdout(io.StringIO()):
             env.step([m[0] for m in moves], [m[1] for m in moves])
         ev.observe(t, pre, env.state, intents)
-    return {"score": env.summary()["score"], "rules": ev.summary(), "steps": env.t}
+    s = env.summary()
+    return {"score": s["score"], "rules": ev.summary(), "steps": env.t, "orders_completed": s["orders_completed"],
+            "orders_expired": s.get("orders_expired", 0), "guards": len(getattr(partner, "guards", [])),
+            "judgments": ev.judgments}

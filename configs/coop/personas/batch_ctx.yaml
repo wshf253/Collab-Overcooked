@@ -1,0 +1,20 @@
+# Context cards (docs/CONTEXT_PARTNER_PLAN_v3.md, section 5). Pilot: two cards that are
+# opposite on every context rule, plus the built-in neutral partner. Card order = priority
+# between context rules (default_work applies only when no other context does). No fallbacks;
+# backstories are voice only and must not imply helping out.
+
+A:
+  backstory: "A prep cook who came up through a busy catering line. Fast with a knife, keeps an eye on the ticket clock."
+  rules:
+    - default_work: {mode: prep}
+    - on_urgent: {mode: takes, unless_ego_on_it: "yes"}
+    - on_blocked: {mode: clears}
+    - on_prep_ready: {mode: continues}
+
+B:
+  backstory: "A line cook from a small bistro where everyone cooked their own tickets. Likes to own a dish from start to finish."
+  rules:
+    - default_work: {mode: whole}
+    - on_urgent: {mode: keeps}
+    - on_blocked: {mode: waits}
+    - on_prep_ready: {mode: switches}

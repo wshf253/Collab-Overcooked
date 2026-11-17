@@ -21,7 +21,7 @@ from coop.partner import PERSONAS, SimulatedHuman  # noqa: E402
 from coop.persona_check import (format_gate1, format_gate2, format_why, gate1, gate2,  # noqa: E402
                                 play_rule_episode, rescore, why)
 from coop.rule_partner import RulePlayer  # noqa: E402
-from coop.rules import (CATEGORIES, NEUTRAL, Rule, category, check_rules, load_cards, load_library,  # noqa: E402
+from coop.rules import (CATEGORIES, CONTEXT_RULE_IDS, NEUTRAL, Rule, category, check_rules, load_cards, load_library,  # noqa: E402
                         parse_rule, render)
 from coop.screen import DEFAULT_MENU  # noqa: E402
 
@@ -44,7 +44,7 @@ class RuleLibraryTests(unittest.TestCase):
         self.cards = load_cards(CARDS, self.lib)
 
     def test_library_has_the_ten_rules(self):
-        self.assertEqual(set(self.lib), {"own_station", "solo_dish", "split_dish", "order_priority", "serves",
+        self.assertEqual(set(self.lib) - set(CONTEXT_RULE_IDS), {"own_station", "solo_dish", "split_dish", "order_priority", "serves",
                                          "wants_supplies", "handover_spot", "on_takeover", "on_contention",
                                          "waits_for_commit"})
         for rid, spec in self.lib.items():
@@ -62,6 +62,8 @@ class RuleLibraryTests(unittest.TestCase):
                                     (a.name, b.name))
             self.assertGreaterEqual(len(set(a.rules) - set(b.rules)), 3, (a.name, b.name))
         for cat in CATEGORIES:
+            if cat == "context":
+                continue      # plan v3's context rules: batch_ctx only
             variants = {frozenset(r for r in c.rules if category(r, self.lib) == cat) for c in cards.values()}
             present = [c for c in cards.values() if any(category(r, self.lib) == cat for r in c.rules)]
             self.assertGreaterEqual(len(present), 2, cat)
@@ -101,8 +103,8 @@ class RuleLibraryTests(unittest.TestCase):
         for a, b in itertools.combinations(cards.values(), 2):
             self.assertGreaterEqual(len(set(a.rules) - set(b.rules)), 3, (a.name, b.name))
         for cat in CATEGORIES:
-            if cat == "hand-over":
-                continue      # dropped with handover_spot (deviation from the plan, see the card file)
+            if cat in ("hand-over", "context"):
+                continue      # hand-over dropped with handover_spot; context rules are batch_ctx only
             self.assertGreaterEqual(sum(any(category(r, self.lib) == cat for r in c.rules)
                                         for c in cards.values()), 2, cat)
 

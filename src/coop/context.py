@@ -8,7 +8,7 @@ so a player's decisions and the predicates judging them use what that player cou
 | ``urgent`` | open orders (index, dish) with at most ``theta`` steps left on their timer |
 | ``on_order(who)`` | the dish ``who`` is working on: what it holds belongs to it, or its last choice |
 | ``blocked`` | utensil kinds whose every utensil is running or holds finished food |
-| ``prep_ready`` | open dishes with a processed item (an intermediate product of the dish) waiting unused, finished in a utensil or on a counter |
+| ``prep_ready`` | open dishes with a processed item (an intermediate product of the dish) waiting unused, finished in a utensil or on a counter, for at least ``PREP_WAIT`` steps (``ContextTracker``) |
 
 ``ContextTracker`` turns the features into events: a context *starts* at the step it first
 holds (an order becoming urgent, a kind becoming blocked, prepared items appearing).
@@ -58,16 +58,26 @@ def blocked(state, kitchen) -> List[str]:
     return out
 
 
-def prep_ready(state, kitchen, n_open: int) -> List[str]:
-    """Open dishes for which a processed item waits unused (not held by anyone)."""
-    waiting: List[str] = []
+def processed_items(state, kitchen) -> List[Tuple[Any, str]]:
+    """(cell, item) of processed items lying unused: finished in a utensil or on a counter."""
+    out = []
     for u in kitchen.utensils:
         status, product, _, _ = kitchen.utensil_status(state, u)
         if status == "finished" and product:
-            waiting.append(product)
+            out.append((kitchen.utensils[u], product))
     for p, obj in state.objects.items():
-        if p not in kitchen.utensil_at and getattr(obj, "name", None):
-            waiting.append(obj.name)
+        if p not in kitchen.utensil_at and getattr(obj, "name", None) and obj.name not in kitchen.raw:
+            out.append((p, obj.name))
+    return out
+
+
+def prep_ready(state, kitchen, n_open: int, since: Optional[Dict] = None, now: Optional[int] = None,
+               wait: int = 0) -> List[str]:
+    """Open dishes for which a processed item (an intermediate of the dish) waits unused. With
+    ``since`` (cell, item) -> first step seen, only items that have waited ``wait`` steps
+    count: a cook coming back for what it just cut is not "waiting"."""
+    waiting = [item for cell, item in processed_items(state, kitchen)
+               if since is None or now is None or now - since.get((cell, item), now) >= wait]
     out = []
     for d in open_dishes(state, n_open):
         need = tree(kitchen, d) - {d} - set(kitchen.raw)
@@ -88,9 +98,13 @@ def on_order(state, kitchen, n_open: int, index: int, last_dish: Optional[str] =
     return last_dish if last_dish in dishes else None
 
 
-def features(state, kitchen, n_open: int, theta: int) -> Dict[str, Any]:
+PREP_WAIT = 5      # steps a processed item must lie unused to count as "prepared items waiting"
+
+
+def features(state, kitchen, n_open: int, theta: int, since: Optional[Dict] = None, now: Optional[int] = None,
+             wait: int = PREP_WAIT) -> Dict[str, Any]:
     return {"urgent": urgent(state, n_open, theta), "blocked": blocked(state, kitchen),
-            "prep_ready": prep_ready(state, kitchen, n_open)}
+            "prep_ready": prep_ready(state, kitchen, n_open, since, now, wait)}
 
 
 @dataclass
@@ -103,9 +117,15 @@ class ContextTracker:
     prev: Dict[str, Any] = field(default_factory=lambda: {"urgent": [], "blocked": [], "prep_ready": []})
     now: Dict[str, Any] = field(default_factory=lambda: {"urgent": [], "blocked": [], "prep_ready": []})
     events: List[Dict[str, Any]] = field(default_factory=list)
+    since: Dict[Tuple[Any, str], int] = field(default_factory=dict)
+    wait: int = PREP_WAIT
 
     def observe(self, state, t: int) -> List[Dict[str, Any]]:
-        f = features(state, self.kitchen, self.n_open, self.theta)
+        here = set(processed_items(state, self.kitchen))
+        self.since = {k: v for k, v in self.since.items() if k in here}
+        for k in here:
+            self.since.setdefault(k, t)
+        f = features(state, self.kitchen, self.n_open, self.theta, self.since, t, self.wait)
         new = []
         dishes = open_dishes(state, self.n_open)
         prev_urgent = {d for _, d in self.prev["urgent"]}

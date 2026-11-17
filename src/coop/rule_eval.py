@@ -908,7 +908,12 @@ CHECKS = {"own_station": OwnStation, "solo_dish": SoloDish, "split_dish": SplitD
 
 
 def make_checks(rules: List[Rule], library, kitchen) -> List[Check]:
-    return [CHECKS[r.id](r, library, kitchen) for r in rules]
+    from .context_eval import ContextRules
+    from .rules import CONTEXT_RULE_IDS
+    out: List[Check] = [CHECKS[r.id](r, library, kitchen) for r in rules if r.id not in CONTEXT_RULE_IDS]
+    if any(r.id in CONTEXT_RULE_IDS for r in rules):
+        out.append(ContextRules(rules, library, kitchen))     # one checker: card order decides
+    return out
 
 
 # ---------------------------------------------------------------------- #
@@ -925,12 +930,43 @@ class RuleEvaluator:
         self.checks = make_checks(rules, library, kitchen)
         self.jobs = {"partner": JobView(mdp, partner), "ego": JobView(mdp, ego)}
         self.judgments: List[Judgment] = []
+        # Context rules (plan v3): each player's view and context history, so a choice is
+        # judged in the context its chooser saw when it decided.
+        self.ctx_views = None
+        self.ctx_hist: Dict[str, Dict[int, Dict[str, Any]]] = {"partner": {}, "ego": {}}
+        from .rules import CONTEXT_RULE_IDS
+        if any(r.id in CONTEXT_RULE_IDS for r in rules):
+            from .context import ContextTracker
+            from .view import Belief
+            theta = getattr(mdp, "urgent_steps", None) or 10
+            self.ctx_views = {role: (Belief(mdp, idx, view_radius) if view_radius is not None else None,
+                                     ContextTracker(kitchen, n_open, theta))
+                              for role, idx in (("partner", partner), ("ego", ego))}
+            # the partner's own memory of the kitchen (who works on what), as its view shows it
+            self.ctx_rt = Tracker(kitchen, menu, {ego: "ego", partner: "partner"}, n_open)
+            self._prev_pview = None
 
     def observe(self, t: int, pre, post, intents: Optional[Dict[str, Optional[str]]] = None) -> List[Judgment]:
         if not self.tracker.started:
             self.tracker.start(pre)
+        if self.ctx_views is not None:
+            from .context import open_dishes
+            from .context import on_order
+            for role, (belief, ct) in self.ctx_views.items():
+                view = belief.update(pre, t) if belief is not None else pre
+                ct.observe(view, t)
+                self.ctx_hist[role][t] = dict(ct.now, open=open_dishes(pre, self.tracker.n_open))
+                if role == "partner":
+                    if self._prev_pview is None:
+                        self.ctx_rt.start(view)
+                    else:
+                        self.ctx_rt.observe(t - 1, self._prev_pview, view)
+                    self._prev_pview = view
+                    self.ctx_hist[role][t]["other_on"] = on_order(view, self.tracker.k, self.tracker.n_open, self.ego,
+                                                                  self.ctx_rt.order_of.get("ego"))
         events = parse_events(t, pre, post, self.tracker.info, self.tracker.roles)
         ctx = Ctx(t, pre, post, events, self.tracker, self.jobs, intents, self.rules)
+        ctx.ctx_hist = self.ctx_hist
         out: List[Judgment] = []
         for c in self.checks:
             out += c.judge(ctx)
