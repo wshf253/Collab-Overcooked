@@ -264,13 +264,15 @@ The timers are much too tight for LLM players.
   aligned); with card B it works on B's order (47%).
 
 **Changes:**
-- **Start guard** (`useful_starts_only`, ego and partner, ctx configs only): refuse a start
-  that makes nothing an open order needs.
+- **Start guard** (`useful_starts_only`): built, but **off** in all configs (user, 2026-11-18):
+  recipe mistakes are the model's own behaviour and part of what is measured.
 - **Timers:** ctx configs use slack 2.5 and θ 25; `days_ctx` regimes 1.75 / 3.0 / 2.5.
 - **Gate 3 gains `oracle_cued`:** the wants line of the context that holds is also shown at the
   decision.
 
 **Old configs:** identical (mock check).
+
+**Next (user):** skip further gates and run the learning pilot (`days_ctx.yaml`).
 
 ### 3.22 First LLM gates on the context cards (2026-11-18)
 **Gate 1** (`gate1_ctx`). Qwen partner, steady ego.

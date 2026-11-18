@@ -52,7 +52,6 @@ partner:
   cards: configs/coop/personas/batch_ctx.yaml
   complexity: 6
   remind: true
-  useful_starts_only: true    # refuse a start that makes nothing an open order needs
   enforce: false
   max_tokens: 400
   backend:
@@ -78,7 +77,6 @@ agent:
   probe: false
   tom: true
   tom_mode: structured
-  useful_starts_only: true
   max_tokens: 400
   model_max_tokens: 1000
 conditions:
