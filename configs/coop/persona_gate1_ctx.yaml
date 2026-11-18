@@ -13,8 +13,10 @@ open_orders: 2
 view_radius: 2
 order_lists: controlled
 deadlines:
-  slack: 1.5
-  urgent_steps: 15
+  # 2026-11-18: slack 2.5 and theta 25 for LLM players (Gate 3 with 1.5: 3.9 orders expired
+  # per episode, 76% of stews); the scripted Gate 0 used 1.5 / 15.
+  slack: 2.5
+  urgent_steps: 25
   expiry_penalty: 20
   # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
   reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
@@ -32,6 +34,7 @@ partner:
   cards: configs/coop/personas/batch_ctx.yaml
   complexity: 6
   remind: true
+  useful_starts_only: true    # refuse a start that makes nothing an open order needs
   enforce: false
   max_tokens: 400
   backend:

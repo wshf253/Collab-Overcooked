@@ -57,12 +57,39 @@ class CtxLLMTests(unittest.TestCase):
         self.assertEqual(sorted(rep["cards_result"]), ["A", "B"])
         self.assertIn("proactive", rep["egos"])
 
+    def test_useless_start_is_refused(self):
+        """useful_starts_only: a pot with only the potato of an open stew may not be started."""
+        from overcooked_ai_py.mdp.overcooked_mdp import ObjectState
+        from coop.env import ContinuousOrderEnv
+        from coop.executor import Executor, parse_macro
+        from coop.kitchen import Kitchen
+        menu = ["boiled_potato_slices", "baked_carrot_soup", "sliced_carrot_and_potato_stew"]
+        env = ContinuousOrderEnv(menu, layout="open_ing2_env", open_orders=2, order_mode="controlled")
+        with contextlib.redirect_stdout(io.StringIO()):
+            st = env.reset(0)
+        st.order_list[:2] = ["sliced_carrot_and_potato_stew", "baked_carrot_soup"]
+        k = Kitchen(env.mdp, 0, st)
+        pot = k.utensils["pot0"]
+        st.objects[pot] = ObjectState("potato", "semi-finished", pot, (["potato"], 1, 0))
+        ex = Executor(k)
+        m, _ = parse_macro("cook(pot0)")
+        self.assertIsNone(ex.check(m, st))                       # off by default: allowed
+        ex.useful_starts_only, ex.n_open = True, 2
+        self.assertIn("no open order needs", ex.check(m, st))
+        st.objects[pot] = ObjectState("potato", "semi-finished", pot, (["carrot_slices", "potato"], 2, 0))
+        self.assertIsNone(ex.check(m, st))                       # the stew batch is complete
+
     def test_gate3_oracle_and_mismatched(self):
-        runs, _ = run("persona_value_ctx", run_seeds=[0], horizon=60)
+        runs, _ = run("persona_value_ctx", run_seeds=[0], horizon=200)
         sp = lambda c: json.loads((runs / f"{c}/A/seed0/day01/ep01/agent_log.json").read_text())["system_prompt"]
         self.assertIn("Cook and serve what I prepare", sp("oracle"))                 # card A
         self.assertIn("Take the other open order", sp("oracle_mismatched"))          # card B
         self.assertNotIn("What your partner wants", sp("tom_struct"))
+        self.assertIn("What your partner wants", sp("oracle_cued"))
+        lg = json.loads((runs / "oracle_cued/A/seed0/day01/ep01/agent_log.json").read_text())
+        self.assertIn("cues_shown", lg)
+        cued = [c["user"] for c in lg["calls"] if "What your partner told you applies now" in c["user"]]
+        self.assertEqual(len(cued), lg["cues_shown"])
 
     def test_learning_pilot(self):
         runs, out = run("days_ctx", run_seeds=[0, 1], days=2, episodes_per_day=1, horizon=130,

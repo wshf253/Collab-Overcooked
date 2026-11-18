@@ -143,7 +143,8 @@ class LLMAgent(Agent):
                  probe_max_tokens: int = 500, partner_log_lines: int = 15, retry_invalid: bool = True,
                  tom_mode: str = "free", memory_mode: str = "notes", model_words: int = 200,
                  model_max_tokens: int = 1000, oracle_wants: Optional[List[str]] = None,
-                 note_words: int = 60, file_budgets: Optional[List[int]] = None):
+                 note_words: int = 60, file_budgets: Optional[List[int]] = None,
+                 useful_starts_only: bool = False, oracle_cues: Optional[List[Dict[str, Any]]] = None):
         if tom_mode not in TOM_MODES or memory_mode not in MEMORY_MODES:
             raise ValueError(f"tom_mode must be one of {TOM_MODES}, memory_mode one of {MEMORY_MODES}")
         self.backend_spec = dict(backend)
@@ -154,6 +155,10 @@ class LLMAgent(Agent):
         self.daily = memory and memory_mode == "model_daily"
         self.latest_fb = memory and memory_mode == "latest_feedback"
         self.oracle_wants = list(oracle_wants or [])
+        # plan v3: refuse starts that make nothing an open order needs; and the cued oracle
+        # (the wants line of the context that holds now, shown at the decision)
+        self.useful_starts_only = bool(useful_starts_only)
+        self.oracle_cues = list(oracle_cues or [])
         self.note_words = note_words
         self.file_budgets = tuple(file_budgets or DAILY_BUDGETS)
         self.day_log: Optional[Dict[str, Any]] = None
@@ -171,6 +176,7 @@ class LLMAgent(Agent):
     # ------------------------------------------------------------------ #
     def begin_episode(self, mdp, index, context):
         self.context = context
+        self.cues_shown = 0
         self.mdp = mdp
         radius = context.get("view_radius")
         self.belief = Belief(mdp, index, radius) if radius is not None else None
@@ -222,6 +228,8 @@ class LLMAgent(Agent):
         if self.kitchen is None:
             self.kitchen = Kitchen(self.mdp, self.context["index"], state)
             self.executor = Executor(self.kitchen, self.context["episode_seed"])
+            self.executor.useful_starts_only = getattr(self, "useful_starts_only", False)
+            self.executor.n_open = max(1, self.context.get("open_orders", 1))
             self.system = self._system_prompt()
         if self.belief is not None:
             # From here on the agent only uses what it sees and remembers.
@@ -286,12 +294,37 @@ class LLMAgent(Agent):
                 "usage": self.usage.as_dict(), "invalid_actions": self.invalid, "fallbacks": self.fallbacks,
                 "decisions": self.decisions, "probe": self.probe_answer, "model_update": self.model_update,
                 "system_prompt": self.system,
-                "calls": self.calls}
+                "calls": self.calls,
+                **({"cues_shown": self.cues_shown} if self.oracle_cues else {})}
 
     # ------------------------------------------------------------------ #
     # Watching (public information only)
     # ------------------------------------------------------------------ #
+    def _cue(self, state, t) -> Optional[str]:
+        """Cued oracle: the wants line of the first card rule (card order) whose context holds
+        in this player's own view now."""
+        if not self.oracle_cues:
+            return None
+        from .context import ContextTracker, open_dishes, tree
+        if getattr(self, "_cue_tracker", None) is None or self._cue_tracker_ep != id(self.context):
+            self._cue_tracker = ContextTracker(self.kitchen, max(1, self.context.get("open_orders", 1)),
+                                               getattr(self.mdp, "urgent_steps", None) or 10)
+            self._cue_tracker_ep = id(self.context)
+        f = self._cue_tracker.now
+        k = self.kitchen
+        dishes = open_dishes(state, max(1, self.context.get("open_orders", 1)))
+        need = {k.recipes[x][0] for d in dishes for x in tree(k, d) if x in k.recipes}
+        holds = {"on_urgent": bool(f["urgent"]), "on_blocked": any(b in need for b in f["blocked"]),
+                 "on_prep_ready": bool(f["prep_ready"])}
+        for c in self.oracle_cues:
+            if holds.get(c["rule"]):
+                return c["wants"]
+        return None
+
     def _watch(self, state, t):
+        if self.oracle_cues and self.kitchen is not None:
+            self._cue(state, t)
+            self._cue_tracker.observe(state, t)
         k = self.kitchen
         partner = state.players[k.other]
         self.pace.update(partner, getattr(partner, "visible", True))
@@ -416,6 +449,14 @@ class LLMAgent(Agent):
         return "\n\n".join(parts)
 
     def _observation(self, state, t) -> str:
+        text = self._observation_base(state, t)
+        cue = self._cue(state, t) if self.oracle_cues else None
+        if cue:
+            text += f"\nWhat your partner told you applies now: {cue}"
+            self.cues_shown = getattr(self, "cues_shown", 0) + 1
+        return text
+
+    def _observation_base(self, state, t) -> str:
         k = self.kitchen
         me, other = state.players[k.index], state.players[k.other]
         n_open = max(1, self.context.get("open_orders", 1))

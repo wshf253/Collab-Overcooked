@@ -472,7 +472,8 @@ def make_partner(cfg: DaysConfig, persona: str, context: Dict[str, Any]):
         return RulePlayer(rules, normalize_menu(cfg.menu), "partner", persona), rules, None
     p = cfg.partner
     agent = LLMPartner(p["backend"], card, load_library(), complexity=k, remind=p.get("remind", True),
-                       enforce=p.get("enforce", False), max_tokens=p.get("max_tokens", 400))
+                       enforce=p.get("enforce", False), max_tokens=p.get("max_tokens", 400),
+                       useful_starts_only=p.get("useful_starts_only", False))
     ctx = {key: v for key, v in context.items() if key not in ("index", "partner_index")}
     return LLMPartnerPlayer(agent, ctx), rules, None
 
@@ -498,7 +499,12 @@ def resolve_agent_spec(cfg: DaysConfig, condition: str, persona: str) -> Dict[st
             ps = [p for p in cfg.personas if p != NEUTRAL] or cfg.personas
             card = cfg.cards()[ps[(ps.index(persona) + 1) % len(ps)] if persona in ps else ps[0]]
         lib = load_library()
-        spec["oracle_wants"] = [render(r, "wants", lib, oracle_kitchen(cfg)) for r in card.active(cfg.partner.get("complexity"))]
+        kit = oracle_kitchen(cfg)
+        active = card.active(cfg.partner.get("complexity"))
+        spec["oracle_wants"] = [render(r, "wants", lib, kit) for r in active]
+        if oracle == "cued":     # also shown at the decision where its context holds (context rules)
+            spec["oracle_cues"] = [{"rule": r.id, "wants": render(r, "wants", lib, kit)} for r in active
+                                   if r.id in ("on_urgent", "on_blocked", "on_prep_ready")]
     if spec.get("type") not in ("rule_ego", "context_ego"):
         return spec
     align = spec.get("align", "own")

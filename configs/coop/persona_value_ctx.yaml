@@ -2,6 +2,8 @@
 #   tom_struct          no knowledge (structured ToM within the episode)
 #   oracle              the card's wants lines up front
 #   oracle_mismatched   the OTHER card's wants lines (does the ego rely on the content?)
+#   oracle_cued         the card's wants lines, and the line of the context that holds now
+#                       shown at the decision (can the ego use it at the right moment?)
 # LLM partner on cards A and B, order timers. Score is the primary outcome.
 # Analyse: python -m coop.learning outputs/value_ctx   (interaction-episode score minus tom_struct)
 name: persona_value_ctx
@@ -13,8 +15,10 @@ open_orders: 2
 view_radius: 2
 order_lists: controlled
 deadlines:
-  slack: 1.5
-  urgent_steps: 15
+  # 2026-11-18: slack 2.5 and theta 25 for LLM players (Gate 3 with 1.5: 3.9 orders expired
+  # per episode, 76% of stews); the scripted Gate 0 used 1.5 / 15.
+  slack: 2.5
+  urgent_steps: 25
   expiry_penalty: 20
   # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
   reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
@@ -28,6 +32,7 @@ partner:
   cards: configs/coop/personas/batch_ctx.yaml
   complexity: 6
   remind: true
+  useful_starts_only: true    # refuse a start that makes nothing an open order needs
   enforce: false
   max_tokens: 400
   backend:
@@ -53,10 +58,12 @@ agent:
   probe: false
   tom: true
   tom_mode: structured
+  useful_starts_only: true
   max_tokens: 400
   model_max_tokens: 1000
 conditions:
   tom_struct: {memory: false}
   oracle: {memory: false, oracle: true}
   oracle_mismatched: {memory: false, oracle: other}
+  oracle_cued: {memory: false, oracle: cued}
 reference_agent: {type: scripted, persona: steady}

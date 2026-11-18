@@ -241,6 +241,37 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.23 After re-scoring: competence first (2026-11-18)
+**Gate 1 re-scored with the fixed checks:**
+- **Pass:** A `clears` 94%, A `continues` 81%, B `whole` 72%, B `keeps` 89%.
+- **Fail:** A `prep` 58% (it cooks), A `takes` 65%, B `switches` 51%, B `waits` 67% (n = 6).
+- These episodes predate the default-context reminders.
+
+**Qwen pairs under the timers** (`coop.deadlines --from-folder outputs/value_ctx`, `tom_struct`):
+
+| dish | limit | completed | expired |
+|---|---|---|---|
+| stew | 86 | 37 | 117 (76%) |
+| potato slices | 72 | 93 | 72 (44%) |
+| carrot soup | 102 | 113 | 51 (31%) |
+
+The timers are much too tight for LLM players.
+
+**Ego side of Gate 3** (`why --side ego`, oracle):
+- **Recipe mistakes.** It often starts a pot with only the stew's potato, which makes
+  `boiled_potato` (a valid recipe on no open order).
+- **It ignores the wants lines.** With card A it still fetches and cuts (default context 64%
+  aligned); with card B it works on B's order (47%).
+
+**Changes:**
+- **Start guard** (`useful_starts_only`, ego and partner, ctx configs only): refuse a start
+  that makes nothing an open order needs.
+- **Timers:** ctx configs use slack 2.5 and θ 25; `days_ctx` regimes 1.75 / 3.0 / 2.5.
+- **Gate 3 gains `oracle_cued`:** the wants line of the context that holds is also shown at the
+  decision.
+
+**Old configs:** identical (mock check).
+
 ### 3.22 First LLM gates on the context cards (2026-11-18)
 **Gate 1** (`gate1_ctx`). Qwen partner, steady ego.
 - **Distinctness:** 100%.

@@ -151,6 +151,10 @@ class Executor:
                 return f"empty your hands before starting {u} (you hold {held.name})"
             if status != "loaded":
                 return f"{u} cannot be started ({k.utensil_text(state, u)})"
+            if getattr(self, "useful_starts_only", False):
+                reason = self._useless_start(state, u)
+                if reason:
+                    return reason
             return None
         if m.name == "deliver_soup":
             if held is None:
@@ -248,6 +252,26 @@ class Executor:
         return status, message
 
     # ------------------------------------------------------------------ #
+    def _useless_start(self, state, u: str) -> Optional[str]:
+        """With ``useful_starts_only`` (plan v3 configs): refuse to start a batch that makes
+        nothing an open order needs, e.g. a pot with only the potato of a stew."""
+        from collections import Counter
+        from .context import open_dishes, tree
+        k = self.k
+        _, _, contents, _ = k.utensil_status(state, u)
+        kind = k.kind_of[u]
+        product = next((p for p, (kd, inputs) in k.recipes.items()
+                        if kd == kind and Counter(inputs) == Counter(contents)), None)
+        dishes = open_dishes(state, getattr(self, "n_open", 1))
+        needed = set().union(*[tree(k, d) for d in dishes]) if dishes else set()
+        if product is None:
+            return f"{u} holds {', '.join(contents)}, which matches no recipe: starting it would throw it away"
+        if product not in needed:
+            wants = [d for d in dishes if any(c in tree(k, d) for c in contents)]
+            hint = f" (for {wants[0]}, add its other ingredients first)" if wants else ""
+            return f"starting {u} now would make {product}, which no open order needs{hint}"
+        return None
+
     def _dispensers(self, item: str) -> List[Pos]:
         return [p for p in self.k.dispensers_for(item) if self.k.mine(p)]
 

@@ -26,8 +26,10 @@ open_orders: 2
 view_radius: 2
 order_lists: controlled
 deadlines:
-  slack: 1.5
-  urgent_steps: 15
+  # 2026-11-18: slack 2.5 and theta 25 for LLM players (Gate 3 with 1.5: 3.9 orders expired
+  # per episode, 76% of stews); the scripted Gate 0 used 1.5 / 15.
+  slack: 2.5
+  urgent_steps: 25
   expiry_penalty: 20
   # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
   reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
@@ -37,9 +39,9 @@ episodes_per_day: 3
 eval_episodes: 2
 knowledge_probe: true
 regimes:
-  urgent: {slack: 1.0, dishes: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]}
-  blocked: {slack: 2.0, dishes: {baked_carrot_soup: 3, boiled_potato_slices: 1, sliced_carrot_and_potato_stew: 1}}
-  mixed: {slack: 1.5, dishes: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]}
+  urgent: {slack: 1.75, dishes: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]}
+  blocked: {slack: 3.0, dishes: {baked_carrot_soup: 3, boiled_potato_slices: 1, sliced_carrot_and_potato_stew: 1}}
+  mixed: {slack: 2.5, dishes: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]}
 regime_order:
   even: [urgent, urgent, blocked, blocked, mixed]
   odd: [blocked, blocked, urgent, urgent, mixed]
@@ -50,6 +52,7 @@ partner:
   cards: configs/coop/personas/batch_ctx.yaml
   complexity: 6
   remind: true
+  useful_starts_only: true    # refuse a start that makes nothing an open order needs
   enforce: false
   max_tokens: 400
   backend:
@@ -75,6 +78,7 @@ agent:
   probe: false
   tom: true
   tom_mode: structured
+  useful_starts_only: true
   max_tokens: 400
   model_max_tokens: 1000
 conditions:
