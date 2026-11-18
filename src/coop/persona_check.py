@@ -359,9 +359,13 @@ def replay_rules(ep_dir: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
     summary = json.loads((ep_dir / "summary.json").read_text())
     persona, kind = summary["persona"], summary.get("kind", "interaction")
     menu = dc.menu if (kind == "eval" or not dc.schedule) else dc.menu_for(summary["day"])
+    if summary.get("regime") and dc.regimes:                     # plan v3 day regimes
+        menu = dc.regimes[summary["regime"]].get("dishes") or menu
+    # the timers the episode was played with (base or regime slack), as its summary records them
+    deadlines = summary.get("deadlines", dc.deadlines)
     env = ContinuousOrderEnv(menu, layout=dc.layout, horizon=dc.horizon,
                              wrong_delivery_penalty=dc.wrong_delivery_penalty, no_repeat=dc.no_repeat,
-                             open_orders=dc.open_orders, order_mode=dc.order_lists)
+                             open_orders=dc.open_orders, order_mode=dc.order_lists, deadlines=deadlines)
     with contextlib.redirect_stdout(io.StringIO()):
         start = env.reset(summary["seed"])
     ego, other = dc.ego_index, 1 - dc.ego_index

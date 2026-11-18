@@ -15,7 +15,7 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "lib" / "overcooked_ai")]
 from coop.days import load_config, run_all  # noqa: E402
 from coop.learning import format_report, report  # noqa: E402
 from coop.orders import make_controlled_sequence  # noqa: E402
-from coop.persona_check import gate0_folder  # noqa: E402
+from coop.persona_check import gate0_folder, rescore  # noqa: E402
 
 
 def run(name, **kw):
@@ -46,6 +46,8 @@ class CtxLLMTests(unittest.TestCase):
         self.assertIn("default_work(mode=prep)", s["rules"])
         user = " ".join(c["user"] for c in log["calls"])
         self.assertIn("steps left]", user)                                             # timers are visible
+        rs = rescore(runs.parent)                                    # replay under the same timers
+        self.assertEqual(rs["failed"], [])
 
     def test_gate2_scripted_context_egos(self):
         runs, out = run("persona_gate2_ctx", run_seeds=[0, 1], horizon=100, episodes_per_day=1)
@@ -72,6 +74,7 @@ class CtxLLMTests(unittest.TestCase):
         self.assertFalse(inter & {"baked_potato_soup", "boiled_carrot_slices"})    # held back
         kp = json.loads((runs / "memory_fb/A/seed0/day01/knowledge_probe.json").read_text())
         self.assertEqual([q["id"] for q in kp["questions"]], ["default_work", "on_urgent", "on_blocked", "on_prep_ready"])
+        self.assertEqual(rescore(out)["failed"], [])                    # regimes replay too
         text = format_report(report(out))
         self.assertIn("transfer", text)
         self.assertIn("orders_expired", text)
