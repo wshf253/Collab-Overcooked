@@ -241,6 +241,43 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.22 First LLM gates on the context cards (2026-11-18)
+**Gate 1** (`gate1_ctx`). Qwen partner, steady ego.
+- **Distinctness:** 100%.
+- **Adherence mostly 50–70%.**
+  - Real breaches: the prep partner A cooks (it puts slices into pots), and B keeps preparing
+    when prepared items wait (`switches`).
+  - Check problems: moving prepared items counted as cooking; "ego on the urgent order" judged
+    from the full state; B plating its own batch counted as clearing.
+- **Competence:** the neutral Qwen partner scores only 18 with the steady ego (the scripted
+  neutral partner: 137).
+- **Twin:** 89–100%.
+
+**Gate 2** (`gate2_ctx`). Qwen partner, scripted egos.
+- **Proactive − best reactive:** A +2 [−73, +76], B −28 [−119, +63]. Fail.
+- **Proactive − mismatched:** A +77 [+24, +129], B +20 [−43, +83].
+
+**Gate 3** (`value_ctx`). Qwen ego.
+- **Score:** `oracle` − `tom_struct` +8.8 ± 9.6; `oracle_mismatched` − `tom_struct` −6.9 ± 11.1.
+- **Alignment does not move with the oracle** (−0.6 ± 1.5): the ego does not act on the
+  wants lines.
+- **Timers:** Qwen pairs lose about 3.9 orders per episode to expiry and score about 115 below
+  the scripted reference. The timers (from scripted-pair times) are too tight for LLM players.
+
+**Changes (2026-11-18):**
+- **Checks:**
+  - a prep partner breaks its card only by cooking or serving;
+  - the ego's position is judged as the partner's view shows it;
+  - a cook's own batch is not "clearing";
+  - the `whole` partner's own order is the order it states (LLM) or takes (twin).
+- **Twin:** its own batch is no reason to wait. Twin adherence 99–100%.
+- **LLM partner:** reminders in the default context at the decisions where the card is at
+  stake.
+- **Tools:**
+  - `persona_check why --side ego` (what the oracle ego does at each context);
+  - `coop.deadlines --from-folder` (per-dish completed, expired and steps for LLM players);
+  - `coop.days --slack`.
+
 ### 3.21 Plan v3 LLM experiments built (W4, Gates 1–3, learning pilot), 2026-11-17
 **User's decision:** go on to the LLM experiments despite Gate 0. Scripted egos re-plan every
 step, so they never commit before observing. The LLM ego decides in macro actions.

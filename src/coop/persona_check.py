@@ -370,8 +370,16 @@ def replay_rules(ep_dir: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
                        dc.open_orders, env.mdp, view_radius=dc.view_radius)
     import bisect
     plog_path = ep_dir / "partner_log.json"
-    dec_ts = sorted(d.get("t", 0) for d in (json.loads(plog_path.read_text()).get("decisions") or [])) \
-        if plog_path.exists() else []
+    decs = sorted((json.loads(plog_path.read_text()).get("decisions") or []) if plog_path.exists() else [],
+                  key=lambda d: d.get("t", 0))
+    dec_ts = [d.get("t", 0) for d in decs]
+    stated = []                       # the order it said it worked on, as of each decision
+    last = None
+    for d in decs:
+        o = (d.get("intention") or {}).get("order")
+        if o not in (None, "", "none"):
+            last = o
+        stated.append(last)
     match = True
     for line in (ep_dir / "steps.jsonl").read_text().splitlines():
         rec = json.loads(line)
@@ -380,7 +388,8 @@ def replay_rules(ep_dir: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
         with contextlib.redirect_stdout(io.StringIO()):
             post, _, _, _ = env.step(acts, rec["params"])
         i = bisect.bisect_right(dec_ts, rec["t"]) - 1      # the LLM partner's decision behind this step
-        ev.observe(rec["t"], pre, post, {"decided": {"partner": dec_ts[i] if i >= 0 else None}})
+        ev.observe(rec["t"], pre, post, {"decided": {"partner": dec_ts[i] if i >= 0 else None},
+                                         "orders": {"partner": stated[i] if i >= 0 else None}})
         if abs(env.score - rec["score"]) > 1e-9 or any(
                 list(p.position) != r["pos"] for p, r in zip(post.players, rec["players"])):
             match = False
@@ -481,8 +490,11 @@ _NUM = re.compile(r"(?<![A-Za-z_])-?\d+")
 
 
 def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str] = None,
-        examples: int = 3, rescored: bool = False) -> Dict[str, Any]:
-    """The partner's non-adherent decisions per card and rule, with what it said it was doing."""
+        examples: int = 3, rescored: bool = False, side: str = "partner",
+        conditions: Optional[List[str]] = None) -> Dict[str, Any]:
+    """The partner's non-adherent decisions per card and rule, with what it said it was doing.
+    ``side="ego"``: the ego's non-aligned decisions per condition, card and rule (plan v3 Gate 3:
+    what does an informed ego do at each context?), with its structured read of the partner."""
     import bisect
     rows: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for orig in sorted(out.glob("runs/*/*/seed*/day*/ep*/rule_events.jsonl")):
@@ -491,20 +503,22 @@ def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str]
             continue
         d = ev_path.parent
         card, seed, day, ep = d.parents[2].name, d.parents[1].name, d.parents[0].name, d.name
-        if card == NEUTRAL or (cards and card not in cards):
+        cond = d.parents[3].name
+        if card == NEUTRAL or (cards and card not in cards) or (conditions and cond not in conditions):
             continue
         judged = [json.loads(x) for x in ev_path.read_text().splitlines() if x.strip()]
-        judged = [j for j in judged if j.get("side") == "partner"
+        judged = [j for j in judged if j.get("side") == side
                   and (not rule_filter or rule_filter in j["rule"])]
         if not judged:
             continue
-        log_path = d / "partner_log.json"
+        log_path = d / ("partner_log.json" if side == "partner" else "agent_log.json")
         log = json.loads(log_path.read_text()) if log_path.exists() else {}
         decisions = sorted(log.get("decisions") or [], key=lambda r: r.get("t", 0))
         times = [r.get("t", 0) for r in decisions]
         shown = {(r["t"], r["rule"]) for r in log.get("reminders") or []}
         for j in judged:
-            row = rows.setdefault((card, j["rule"]), {"card": card, "rule": j["rule"], "n": 0, "adherent": 0,
+            label = card if side == "partner" else f"{cond} {card}"
+            row = rows.setdefault((label, j["rule"]), {"card": label, "rule": j["rule"], "n": 0, "adherent": 0,
                                                       "not": Counter(), "ok": Counter(), "reminded": 0,
                                                       "examples": [], "episodes": set()})
             row["n"] += 1
@@ -522,6 +536,10 @@ def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str]
             if len(row["examples"]) < examples and where not in row["episodes"]:
                 row["episodes"].add(where)
                 it = dec.get("intention") or {}
+                if side == "ego":       # the ego's structured read of the partner at that decision
+                    rd = dec.get("read") or {}
+                    it = {"goal": "; ".join(f"{k}: {v}" for k, v in rd.items()) if isinstance(rd, dict) else str(rd),
+                          "order": None, "reconsider_when": None}
                 row["examples"].append({"where": where, "t": j["t"], "note": j.get("note"),
                                         "decided_t": dec.get("t"), "goal": it.get("goal"), "order": it.get("order"),
                                         "reconsider_when": it.get("reconsider_when"), "chosen": dec.get("chosen"),
@@ -533,11 +551,13 @@ def why(out: Path, cards: Optional[List[str]] = None, rule_filter: Optional[str]
         r["not"] = r["not"].most_common()
         r["ok"] = r["ok"].most_common()
         out_rows.append(r)
-    return {"folder": str(out), "rows": out_rows, "rescored": rescored}
+    return {"folder": str(out), "rows": out_rows, "rescored": rescored, "side": side}
 
 
 def format_why(rep: Dict[str, Any]) -> str:
-    lines = [f"== why the partner breaks a rule: {rep['folder']} (all seeds"
+    who = "the partner breaks a rule" if rep.get("side", "partner") == "partner" else \
+        "the ego does not do what the card wants (aligned = it did)"
+    lines = [f"== why {who}: {rep['folder']} (all seeds"
              + ("; re-scored with the current checks" if rep.get("rescored") else "") + ") =="]
     for r in rep["rows"]:
         bad = r["n"] - r["adherent"]
@@ -572,6 +592,8 @@ def main(argv=None):
     w.add_argument("--card", nargs="+", help="only these cards")
     w.add_argument("--rule", help="only rules whose label contains this text")
     w.add_argument("--examples", type=int, default=3)
+    w.add_argument("--side", choices=["partner", "ego"], default="partner")
+    w.add_argument("--conditions", nargs="+", help="only these conditions (folder names under runs/)")
     w.add_argument("--out", type=Path)
     g0 = sub.add_parser("gate0", help="plan v3 Gate 0 / Gate 2 from a runner folder (scripted egos x context cards)")
     g0.add_argument("run_dir", type=Path)
@@ -596,7 +618,7 @@ def main(argv=None):
         for ep, err in rep["failed"]:
             print(f"  not re-scored: {ep}: {err or 'replay did not match the saved steps'}")
     elif args.cmd == "why":
-        rep = why(args.run_dir, args.card, args.rule, args.examples, args.rescored)
+        rep = why(args.run_dir, args.card, args.rule, args.examples, args.rescored, args.side, args.conditions)
         print(format_why(rep))
     elif args.cmd == "gate1":
         rep = gate1(args.run_dir, args.calibrate, args.judge, args.bar, args.rescored)
@@ -628,7 +650,7 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
     import io
     from .env import ContinuousOrderEnv
     from .kitchen import Kitchen
-    from .rule_eval import RuleEvaluator, decided_at, intent_target
+    from .rule_eval import RuleEvaluator, decided_at, declared_order, intent_target
     from .rule_partner import RulePlayer
     from .rules import load_library
     env = ContinuousOrderEnv(menu, layout=layout, horizon=horizon, open_orders=open_orders,
@@ -653,7 +675,8 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
         moves[ego_index] = ego_player.act(pre, t)
         moves[other] = partner.act(pre, t)
         intents = {"ego": intent_target(ego_player, k), "partner": intent_target(partner, k),
-                   "decided": {"ego": decided_at(ego_player), "partner": decided_at(partner)}}
+                   "decided": {"ego": decided_at(ego_player), "partner": decided_at(partner)},
+                   "orders": {"partner": declared_order(partner)}}
         with contextlib.redirect_stdout(io.StringIO()):
             env.step([m[0] for m in moves], [m[1] for m in moves])
         ev.observe(t, pre, env.state, intents)

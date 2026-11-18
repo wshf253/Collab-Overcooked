@@ -1012,6 +1012,17 @@ def decided_at(player) -> Optional[int]:
     return None
 
 
+def declared_order(player) -> Optional[str]:
+    """The order a player says it is working on: an LLM partner's stated goal order, a
+    context twin's own order; None otherwise."""
+    a = getattr(player, "agent", player)
+    it = getattr(a, "intention", None)
+    if isinstance(it, dict) and it.get("order") not in (None, "", "none"):
+        return it.get("order")
+    p = getattr(a, "player", a)
+    return getattr(p, "commit", None)
+
+
 def intent_target(player, kitchen) -> Optional[str]:
     """The utensil a player is heading for now (LLM players: the current macro; scripted
     players: the current job), or None."""

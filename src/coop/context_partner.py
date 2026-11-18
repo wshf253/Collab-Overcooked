@@ -143,9 +143,16 @@ class ContextPlayer(RulePlayer):
             return self.kind_at[job.pos] in PREP_KINDS
         return False
 
-    def _clears(self, job: Job, kinds: List[str]) -> bool:
-        return (job.pos is not None and self.kind_at.get(job.pos) in kinds
-                and job.kind in ("bring", "plate", "unload", "clear", "supply_dish"))
+    def _clears(self, job: Job, kinds: List[str], others_only: bool = False) -> bool:
+        """Taking finished food out of a utensil of a blocked kind (``others_only``: not from
+        its own batch; finishing its own order is not clearing)."""
+        if not (job.pos is not None and self.kind_at.get(job.pos) in kinds
+                and job.kind in ("bring", "plate", "unload", "clear", "supply_dish")):
+            return False
+        if others_only:
+            u = self.kitchen.utensil_at.get(tuple(job.pos))
+            return self.rt.owner(u) != self.mode
+        return True
 
     def _needs_kind(self, job: Job, kinds: List[str]) -> bool:
         return self._dest_kind(job) in kinds or (job.kind == "start" and self.kind_at.get(job.pos) in kinds)
@@ -213,7 +220,8 @@ class ContextPlayer(RulePlayer):
                 if clear:
                     only = [j for j in jobs if self._clears(j, kinds)]
                 else:
-                    drop = [j for j in current if self._clears(j, kinds) or (m == "waits" and self._needs_kind(j, kinds))]
+                    drop = [j for j in current if self._clears(j, kinds, others_only=True)
+                            or (m == "waits" and self._needs_kind(j, kinds))]
             elif r.id == "on_prep_ready" and ctx["prep_ready"]:
                 cook = (m == "switches") != ego
                 if cook:

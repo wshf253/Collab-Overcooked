@@ -168,6 +168,7 @@ class LLMPartner(LLMAgent):
         if self.ctx_tracker is not None:
             self.ctx_tracker.observe(state, t)
             self.rt.ctx_now = self.ctx_tracker.now
+            self.rt.own_order = (self.intention or {}).get("order") if self.intention else None
         prev = self._prev_view
         if prev is not None and t > 0:
             for ev in parse_events(t - 1, prev, state, self.rt.info, self.rt.roles):

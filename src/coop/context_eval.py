@@ -54,8 +54,18 @@ class ContextRules(Check):
         return (ev.verb == "pickup" and ev.source == "ingredient_dispenser") or \
             (ev.verb in ("start", "put") and self.kind(ev.utensil) in PREP_KINDS)
 
-    def clearing(self, ev: Event, kinds: List[str]) -> bool:
-        return ev.verb in ("pickup", "fill") and self.kind(ev.utensil) in kinds
+    def clearing(self, ev: Event, kinds: List[str], ctx=None, others_only: bool = False) -> bool:
+        """Taking finished food out of a utensil of a blocked kind. ``others_only``: not the
+        chooser's own batch (finishing its own order is not clearing someone's utensil)."""
+        if not (ev.verb in ("pickup", "fill") and self.kind(ev.utensil) in kinds):
+            return False
+        return not (others_only and ctx is not None and ctx.tr.owner(ev.utensil) == ev.who)
+
+    def cook_serve_step(self, ev: Event) -> bool:
+        """Cooking or serving: loading or starting a pot or oven, taking food out of one,
+        plating, delivering. Moving prepared items (off a board, onto a counter) is not."""
+        return (ev.verb in ("put", "start") and self.kind(ev.utensil) in COOK_KINDS) or ev.verb in ("fill", "deliver") \
+            or (ev.verb == "pickup" and self.kind(ev.utensil) in COOK_KINDS)
 
     def uses_kind(self, ev: Event, kinds: List[str]) -> bool:
         return ev.verb in ("put", "start") and self.kind(ev.utensil) in kinds
@@ -127,15 +137,19 @@ class ContextRules(Check):
             return
         open_ = h.get("open") or []
         if self.own not in open_:
-            cands = [d for d in open_ if d != h.get("other_on")] or list(open_)
-            self.own = cands[0] if cands else None
+            declared = ((getattr(ctx, "intents", None) or {}).get("orders") or {}).get("partner")
+            if declared in open_:
+                self.own = declared       # the order it says it took (LLM partner: its stated goal)
+            else:
+                cands = [d for d in open_ if d != h.get("other_on")] or list(open_)
+                self.own = cands[0] if cands else None
 
     def _partner(self, ctx, ev: Event) -> List[Judgment]:
         f = self.features(ctx, "partner")
         U, B, P = f["urgent"], f["blocked"], f["prep_ready"]
         whole = "default_work" in self.by_id and self.by_id["default_work"].p["mode"] == "whole"
         mine = self.own if whole and self.own in f["open"] else None
-        ego_on = ctx.tr.order_of.get("ego")
+        ego_on = f.get("other_on", ctx.tr.order_of.get("ego"))       # as the partner's view shows it
         what = f"{ev.verb} {ev.item} at {ev.target}"
         for r in self.rules:
             m = r.p.get("mode")
@@ -153,14 +167,17 @@ class ContextRules(Check):
                 bad = self.serves(ev, U[0]) and not self.prep_step(ev) and U[0] != mine
                 out.append(self.J(ctx, r, "partner", not bad, f"{what} (urgent {U[0]})"))
             elif r.id == "on_blocked" and B:              # waits
-                bad = self.clearing(ev, B) or self.uses_kind(ev, B)
+                bad = self.clearing(ev, B, ctx, others_only=True) or self.uses_kind(ev, B)
                 out.append(self.J(ctx, r, "partner", not bad, f"{what} (blocked {', '.join(B)})"))
-            elif r.id == "on_prep_ready" and P:           # continues
-                out.append(self.J(ctx, r, "partner", not self.cook_of(ev, P), f"{what} (prepared items for {', '.join(P)})"))
+            elif r.id == "on_prep_ready" and P:           # continues: does not cook / serve them
+                bad = self.cook_serve_step(ev) and any(d in ev.dishes for d in P)
+                out.append(self.J(ctx, r, "partner", not bad, f"{what} (prepared items for {', '.join(P)})"))
         if not (U or B or P) and "default_work" in self.by_id:
             r = self.by_id["default_work"]
             if r.p["mode"] == "prep":
-                out.append(self.J(ctx, r, "partner", self.prep_step(ev), what))
+                # preparing is adherent, cooking or serving is not; moving prepared items is neither
+                if self.prep_step(ev) or self.cook_serve_step(ev):
+                    out.append(self.J(ctx, r, "partner", self.prep_step(ev), what))
             else:
                 out.append(self.J(ctx, r, "partner", mine is None or self.serves(ev, mine), f"{what} (own order {mine})"))
         return out
@@ -178,7 +195,8 @@ class ContextRules(Check):
                 on_it = r.opt("unless_ego_on_it") == "yes" and ctx.tr.order_of.get("ego") == u
                 return [self.J(ctx, r, "ego", self.serves(ev, u) == on_it, f"{what} (urgent {u})")]
             if r.id == "on_blocked" and B:
-                return [self.J(ctx, r, "ego", self.clearing(ev, B) == (m == "waits"), f"{what} (blocked {', '.join(B)})")]
+                cleared = self.clearing(ev, B, ctx, others_only=(m == "clears"))
+                return [self.J(ctx, r, "ego", cleared == (m == "waits"), f"{what} (blocked {', '.join(B)})")]
             if r.id == "on_prep_ready" and P:
                 return [self.J(ctx, r, "ego", self.cook_of(ev, P) == (m == "continues"),
                                f"{what} (prepared items for {', '.join(P)})")]
@@ -216,4 +234,19 @@ class ContextRules(Check):
             if extra is not None:
                 self.label = r.label()
                 return render(r, "reminder", self.lib, self.k, extra)
+        r = self.by_id.get("default_work")
+        if r is None:
+            return None
+        held = view.players[me].held_object
+        if r.p["mode"] == "prep":
+            # when it could cook or serve: holding a processed item or a dish, or food is ready
+            food = any(self.k.utensil_status(view, u)[0] == "finished" and self.k.kind_of[u] in COOK_KINDS
+                       for u in self.k.utensils)
+            if (held is not None and (held.name == "dish" or held.name not in self.k.raw)) or (held is None and food):
+                self.label = r.label()
+                return render(r, "reminder", self.lib, self.k)
+            return None
+        if held is None:                                   # whole: when choosing what to do next
+            self.label = r.label()
+            return render(r, "reminder", self.lib, self.k, {"order": getattr(tracker, "own_order", None) or "your order"})
         return None

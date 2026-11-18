@@ -68,7 +68,7 @@ from .profile import MODEL_SECTIONS, avoid_options, score_profile, truth_profile
 from . import rule_partner  # noqa: F401  (registers the "rule_ego" agent type)
 from . import context_partner  # noqa: F401  (registers the "context_ego" agent type)
 from .llm_partner import LLMPartner, LLMPartnerPlayer
-from .rule_eval import RuleEvaluator, decided_at, intent_target
+from .rule_eval import RuleEvaluator, decided_at, declared_order, intent_target
 from .rule_partner import RulePlayer
 from .rules import CONTEXT_RULE_IDS, NEUTRAL, load_cards, load_library, render
 from . import feedback as day_feedback_mod
@@ -386,7 +386,8 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
             if evaluator is not None:
                 kit = evaluator.tracker.k
                 intents = {"ego": intent_target(agent, kit), "partner": intent_target(partner, kit),
-                           "decided": {"ego": decided_at(agent), "partner": decided_at(partner)}}
+                           "decided": {"ego": decided_at(agent), "partner": decided_at(partner)},
+                           "orders": {"partner": declared_order(partner)}}
             state, reward, _, info = env.step([m[0] for m in moves], [m[1] for m in moves])
             agent.observe(t, reward, info)
             if hasattr(partner, "observe"):
@@ -975,6 +976,8 @@ def main(argv=None):
     ap.add_argument("--layout", help="layout file name: new_env (split), open_env, open2_env (open kitchens)")
     ap.add_argument("--open-orders", type=int, help="orders open at once")
     ap.add_argument("--view-radius", type=int, help="partial view for every player")
+    ap.add_argument("--slack", type=float, help="order timers: override deadlines.slack (and every regime's slack, "
+                    "scaled by the same factor)")
     ap.add_argument("--allow-code-change", action="store_true",
                     help="resume even though the episode-playing code changed since the run started")
     args = ap.parse_args(argv)
@@ -982,6 +985,14 @@ def main(argv=None):
                       run_seeds=args.run_seeds, days=args.days, episodes_per_day=args.episodes_per_day,
                       horizon=args.horizon, layout=args.layout, open_orders=args.open_orders,
                       view_radius=args.view_radius)
+    if args.slack is not None:
+        if not cfg.deadlines:
+            ap.error("--slack needs a config with deadlines")
+        factor = args.slack / float(cfg.deadlines["slack"])
+        cfg.deadlines = dict(cfg.deadlines, slack=args.slack)
+        if cfg.regimes:
+            cfg.regimes = {n: dict(r, slack=round(float(r["slack"]) * factor, 3)) if "slack" in r else r
+                           for n, r in cfg.regimes.items()}
     results = run_all(cfg, args.out, args.workers, log=lambda s: print(s, file=sys.stderr, flush=True),
                       allow_code_change=args.allow_code_change)
     failed = [r for r in results["runs"] if r["status"] != "ok"]
