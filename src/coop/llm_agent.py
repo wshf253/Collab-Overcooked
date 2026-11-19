@@ -144,7 +144,8 @@ class LLMAgent(Agent):
                  tom_mode: str = "free", memory_mode: str = "notes", model_words: int = 200,
                  model_max_tokens: int = 1000, oracle_wants: Optional[List[str]] = None,
                  note_words: int = 60, file_budgets: Optional[List[int]] = None,
-                 useful_starts_only: bool = False, oracle_cues: Optional[List[Dict[str, Any]]] = None):
+                 useful_starts_only: bool = False, oracle_cues: Optional[List[Dict[str, Any]]] = None,
+                 recipe_guard: bool = False):
         if tom_mode not in TOM_MODES or memory_mode not in MEMORY_MODES:
             raise ValueError(f"tom_mode must be one of {TOM_MODES}, memory_mode one of {MEMORY_MODES}")
         self.backend_spec = dict(backend)
@@ -158,6 +159,8 @@ class LLMAgent(Agent):
         # plan v3: refuse starts that make nothing an open order needs; and the cued oracle
         # (the wants line of the context that holds now, shown at the decision)
         self.useful_starts_only = bool(useful_starts_only)
+        # test option: also refuse loads that fit no needed recipe and wrong deliveries
+        self.recipe_guard = bool(recipe_guard)
         self.oracle_cues = list(oracle_cues or [])
         self.note_words = note_words
         self.file_budgets = tuple(file_budgets or DAILY_BUDGETS)
@@ -229,6 +232,7 @@ class LLMAgent(Agent):
             self.kitchen = Kitchen(self.mdp, self.context["index"], state)
             self.executor = Executor(self.kitchen, self.context["episode_seed"])
             self.executor.useful_starts_only = getattr(self, "useful_starts_only", False)
+            self.executor.recipe_guard = getattr(self, "recipe_guard", False)
             self.executor.n_open = max(1, self.context.get("open_orders", 1))
             self.system = self._system_prompt()
         if self.belief is not None:

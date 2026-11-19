@@ -138,6 +138,8 @@ class Executor:
                     return f"use fill_dish_with_food({u}) to collect food with a dish"
                 if status not in ("empty", "loaded"):
                     return f"{u} cannot take items now ({k.utensil_text(state, u)})"
+                if getattr(self, "recipe_guard", False):
+                    return self._useless_load(state, u, held.state[0] if held.state is not None else held.name)
                 return None
             if m.name == "fill_dish_with_food":
                 if held is None or held.name != "dish":
@@ -151,7 +153,7 @@ class Executor:
                 return f"empty your hands before starting {u} (you hold {held.name})"
             if status != "loaded":
                 return f"{u} cannot be started ({k.utensil_text(state, u)})"
-            if getattr(self, "useful_starts_only", False):
+            if getattr(self, "useful_starts_only", False) or getattr(self, "recipe_guard", False):
                 reason = self._useless_start(state, u)
                 if reason:
                     return reason
@@ -159,6 +161,10 @@ class Executor:
         if m.name == "deliver_soup":
             if held is None:
                 return "you hold nothing to deliver"
+            if getattr(self, "recipe_guard", False):
+                reason = self._wrong_delivery(state, held)
+                if reason:
+                    return reason
             return None if self._targets_of("S") else "you cannot reach the serving location"
         if m.name == "place_obj_on_counter":
             if held is None:
@@ -271,6 +277,40 @@ class Executor:
             hint = f" (for {wants[0]}, add its other ingredients first)" if wants else ""
             return f"starting {u} now would make {product}, which no open order needs{hint}"
         return None
+
+    def _needed(self, state) -> set:
+        from .context import open_dishes, tree
+        dishes = open_dishes(state, getattr(self, "n_open", 1))
+        return set().union(*[tree(self.k, d) for d in dishes]) if dishes else set()
+
+    def _useless_load(self, state, u: str, item: str) -> Optional[str]:
+        """With ``recipe_guard``: refuse to put ``item`` into ``u`` unless the utensil's contents
+        stay part of a recipe of its kind whose product an open order needs."""
+        from collections import Counter
+        k = self.k
+        _, _, contents, _ = k.utensil_status(state, u)
+        after = Counter(list(contents) + [item])
+        needed = self._needed(state)
+        kind = k.kind_of[u]
+        fits = [p for p, (kd, inputs) in k.recipes.items()
+                if kd == kind and p in needed and not (after - Counter(inputs))]
+        if fits:
+            return None
+        have = f" (it holds {', '.join(contents)})" if contents else ""
+        return f"putting {item} into {u}{have} makes nothing an open order needs"
+
+    def _wrong_delivery(self, state, held) -> Optional[str]:
+        """With ``recipe_guard``: refuse to deliver what no open order takes (same rule as the
+        env: the dish name, plated if and only if the dish is served on a dish)."""
+        from .context import open_dishes
+        name = held.state[0] if held.state is not None else held.name
+        plated = held.catagory == "with_dish"
+        dishes = open_dishes(state, getattr(self, "n_open", 1))
+        if name in dishes and plated == self.k.need_dish(name):
+            return None
+        if name in dishes:
+            return f"{name} must {'' if self.k.need_dish(name) else 'not '}be served on a dish"
+        return f"no open order takes {name} (open: {', '.join(dishes)}): delivering it would cost points"
 
     def _dispensers(self, item: str) -> List[Pos]:
         return [p for p in self.k.dispensers_for(item) if self.k.mine(p)]

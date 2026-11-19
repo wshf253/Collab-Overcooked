@@ -1001,13 +1001,26 @@ python -m coop.voi --gate0 configs/coop/personas/batch_ctx.yaml --layout open_in
 | `persona_gate2_ctx.yaml` | Gate 2 | LLM partner, 8 scripted egos | 2 cards × 8 seeds × 3 episodes |
 | `persona_value_ctx.yaml` | Gate 3 | LLM partner, LLM ego (`tom_struct`, `oracle`, `oracle_mismatched`) | 2 cards × 8 seeds × 4 episodes |
 | `days_ctx.yaml` | learning pilot / main | LLM partner, LLM ego, 9 conditions | 2 cards × 4 seeds × 5 days |
+| `days_ctx_guard.yaml` | test: `days_ctx` with the recipe guard | as `days_ctx` | as `days_ctx` |
 
 `days_ctx.yaml`:
 - **Menu:** interaction episodes use the 3 pilot dishes. The held-out set adds
   `baked_potato_soup` and `boiled_carrot_slices`, never seen in interaction (transfer).
-- **Regimes:** urgency-heavy days (slack 1.0), blocking-heavy days (oven-heavy orders, slack
-  2.0), and a mixed day 5.
+- **Regimes:** urgency-heavy days (slack 1.75), blocking-heavy days (oven-heavy orders, slack
+  3.0), and a mixed day 5 (slack 2.5).
 - **Order:** even seeds see urgency first, odd seeds blocking first.
+
+**Recipe guard** (`recipe_guard: true` under `agent:` and/or `partner:`; test option, off
+everywhere else). The executor refuses three kinds of recipe mistakes, which dominated the
+pilot's feedback (§3.24 of `RESEARCH_STATUS.md`):
+- putting an item into a utensil unless the contents stay part of a recipe of that kind whose
+  product an open order needs (e.g. a second potato into a pot);
+- starting a batch that makes nothing an open order needs (as `useful_starts_only`);
+- delivering what no open order takes, or a dish plated the wrong way.
+
+A refused action comes back as invalid with the reason, and guarded actions are left out of the
+listed options. `days_ctx_guard.yaml` is `days_ctx` with the guard on both players; it asks
+whether knowing the partner shows in the score once the ego's own mistakes are removed.
 
 **Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
 the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day

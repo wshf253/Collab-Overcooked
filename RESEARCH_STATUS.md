@@ -241,6 +241,15 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.25 Recipe guard for a test run (`days_ctx_guard`, built 2026-11-19, not yet run)
+The pilot's feedback and files were dominated by the ego's recipe and delivery mistakes (§3.24).
+To test whether partner knowledge pays once those are removed, `recipe_guard: true` makes the
+executor refuse loads that fit no needed recipe, useless starts and wrong deliveries
+(`docs/coop-setting.md`, "Recipe guard"). `configs/coop/days_ctx_guard.yaml` = `days_ctx` with the
+guard on ego and partner. Old configs are unchanged (mock check, 2,259 files). Read first:
+`oracle` − `tom_struct` (interaction episodes) and `memory_fb` − `tom_struct` (held-out).
+This deviates from the v3 setting (a guarded executor is not part of the plan).
+
 ### 3.24 Learning pilot on context cards: no learning effect (`days_ctx_pilot`, 2026-11-19)
 **Setting:** Qwen ego and Qwen partner; cards A and B; 4 seeds; 5 days × 3 episodes plus 2
 held-out per day; slack 2.5, θ 25; no start guard. Held-out score, condition minus

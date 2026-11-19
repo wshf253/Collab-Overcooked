@@ -68,13 +68,13 @@ class LLMPartner(LLMAgent):
     def __init__(self, backend: Dict[str, Any], card: Card, library: Dict[str, Any],
                  complexity: Optional[int] = None, remind: bool = True, enforce: bool = False,
                  max_tokens: int = 400, partner_log_lines: int = 15, retry_invalid: bool = True,
-                 useful_starts_only: bool = False):
+                 useful_starts_only: bool = False, recipe_guard: bool = False):
         if enforce:
             raise NotImplementedError("partner.enforce is only a hook (plan section 5): implement it if "
                                       "Gate 1 fails, and report its results as a separate simulator variant")
         super().__init__(backend, tom=False, memory=False, probe=False, max_tokens=max_tokens,
                          partner_log_lines=partner_log_lines, retry_invalid=retry_invalid,
-                         useful_starts_only=useful_starts_only)
+                         useful_starts_only=useful_starts_only, recipe_guard=recipe_guard)
         self.card, self.library = card, library
         self.complexity = complexity
         self.rules = card.active(complexity)

@@ -1,0 +1,116 @@
+# TEST variant of days_ctx.yaml (2026-11-19): the same experiment with a recipe guard on both
+# players. The executor refuses
+#   - putting an item into a utensil unless its contents stay part of a recipe of that kind
+#     whose product an open order needs (e.g. a second potato into a pot);
+#   - starting a utensil whose batch makes nothing an open order needs (useful_starts_only);
+#   - delivering what no open order takes, or a dish plated the wrong way.
+# The refused action comes back to the model as invalid with the reason, and guarded actions
+# are left out of the listed options. Question: with fewer recipe/delivery mistakes, does
+# knowing the partner (oracle, memory) show in the score? Compare only within this folder.
+# Suggested first run: --conditions tom_struct memory_fb oracle
+# Plan v3 learning experiment (8). 5 days x 3 interaction episodes, 2 held-out episodes on a
+# frozen copy of the ego's memory after each day and before day 1 (day 0), knowledge probe with
+# one conditional question per context rule. LLM partner on cards A and B, order timers.
+#
+# Exposure and counterbalancing (regimes): urgency-heavy days (tight timers) and blocking-heavy
+# days (oven-heavy orders, loose timers); even run seeds see urgency first, odd seeds blocking
+# first; day 5 mixed. Interaction episodes use only the 3 pilot dishes. The held-out set has the
+# full menu: the 3 pilot dishes and 2 held-back dishes (baked_potato_soup, boiled_carrot_slices)
+# for the transfer test, and the base timers.
+#
+#   tom_struct       no memory across episodes or days
+#   generic_memory   free-form notes (memory_mode notes): does the file structure matter?
+#   memory           structured partner memory, no feedback
+#   memory_fb        structured partner memory with the partner's daily feedback
+#   latest_fb        only the previous day's feedback
+#   oracle           the card's wants lines
+#   swap_other / swap_same / placebo   daily controls from memory_fb
+# Pilot (plan 8): --conditions tom_struct generic_memory memory_fb oracle swap_other
+# Analyse: python -m coop.learning outputs/days_ctx_guard
+name: days_ctx_guard
+menu: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew, baked_potato_soup, boiled_carrot_slices]
+layout: open_ing2_env
+horizon: 300
+wrong_delivery_penalty: 20
+open_orders: 2
+view_radius: 2
+order_lists: controlled
+deadlines:
+  # 2026-11-18: slack 2.5 and theta 25 for LLM players (Gate 3 with 1.5: 3.9 orders expired
+  # per episode, 76% of stews); the scripted Gate 0 used 1.5 / 15.
+  slack: 2.5
+  urgent_steps: 25
+  expiry_penalty: 20
+  # steady-pair medians on open_ing2_env, 2 orders, radius 2, the 5-dish menu (coop.deadlines)
+  reference: {boiled_potato_slices: 48, baked_carrot_soup: 68, sliced_carrot_and_potato_stew: 57.5, baked_potato_soup: 65.5, boiled_carrot_slices: 47}
+ego_index: 0
+days: 5
+episodes_per_day: 3
+eval_episodes: 2
+knowledge_probe: true
+regimes:
+  urgent: {slack: 1.75, dishes: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]}
+  blocked: {slack: 3.0, dishes: {baked_carrot_soup: 3, boiled_potato_slices: 1, sliced_carrot_and_potato_stew: 1}}
+  mixed: {slack: 2.5, dishes: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew]}
+regime_order:
+  even: [urgent, urgent, blocked, blocked, mixed]
+  odd: [blocked, blocked, urgent, urgent, mixed]
+personas: [A, B]
+run_seeds: [0, 1, 2, 3]
+partner:
+  type: llm
+  cards: configs/coop/personas/batch_ctx.yaml
+  complexity: 6
+  remind: true
+  enforce: false
+  max_tokens: 400
+  recipe_guard: true
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_PARTNER_BASE_URL
+    model_env: ICRL_PARTNER_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_PARTNER_API_KEY
+    chat_template_kwargs_env: COOP_PARTNER_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+agent:
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+  probe: false
+  recipe_guard: true
+  tom: true
+  tom_mode: structured
+  max_tokens: 400
+  model_max_tokens: 1000
+conditions:
+  tom_struct: {memory: false}
+  generic_memory: {memory: true, memory_mode: notes}
+  memory: {memory: true, memory_mode: model_daily}
+  memory_fb: {memory: true, memory_mode: model_daily, feedback: specific}
+  latest_fb: {memory: true, memory_mode: latest_feedback, feedback: specific}
+  oracle: {memory: false, oracle: true}
+  swap_other:
+    memory: true
+    memory_mode: model_daily
+    feedback: specific
+    memory_source: {type: swap, from: memory_fb, donor: card}
+  swap_same:
+    memory: true
+    memory_mode: model_daily
+    feedback: specific
+    memory_source: {type: swap, from: memory_fb, donor: seed}
+  placebo:
+    memory: true
+    memory_mode: model_daily
+    feedback: specific
+    memory_source: {type: placebo, from: memory_fb}
+reference_agent: {type: scripted, persona: steady}

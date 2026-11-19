@@ -79,6 +79,48 @@ class CtxLLMTests(unittest.TestCase):
         st.objects[pot] = ObjectState("potato", "semi-finished", pot, (["carrot_slices", "potato"], 2, 0))
         self.assertIsNone(ex.check(m, st))                       # the stew batch is complete
 
+    def test_recipe_guard(self):
+        """recipe_guard: loads that fit no needed recipe and wrong deliveries are refused."""
+        from overcooked_ai_py.mdp.overcooked_mdp import ObjectState
+        from coop.env import ContinuousOrderEnv
+        from coop.executor import Executor, parse_macro
+        from coop.kitchen import Kitchen
+        menu = ["boiled_potato_slices", "baked_carrot_soup", "sliced_carrot_and_potato_stew"]
+        env = ContinuousOrderEnv(menu, layout="open_ing2_env", open_orders=2, order_mode="controlled")
+        with contextlib.redirect_stdout(io.StringIO()):
+            st = env.reset(0)
+        st.order_list[:2] = ["boiled_potato_slices", "baked_carrot_soup"]
+        k = Kitchen(env.mdp, 0, st)
+        me = st.players[0]
+        ex = Executor(k)
+        ex.n_open = 2
+        put, deliver = parse_macro("put_obj_in_utensil(pot0)")[0], parse_macro("deliver_soup()")[0]
+        me.held_object = ObjectState("potato", "ingredient", me.position)
+        self.assertIsNone(ex.check(put, st))                       # off by default: allowed
+        ex.recipe_guard = True
+        self.assertIn("makes nothing an open order needs", ex.check(put, st))
+        me.held_object = ObjectState("potato_slices", "ingredient", me.position)
+        self.assertIsNone(ex.check(put, st))                       # boiled_potato_slices
+        st.order_list[:2] = ["sliced_carrot_and_potato_stew", "baked_carrot_soup"]
+        me.held_object = ObjectState("potato", "ingredient", me.position)
+        self.assertIsNone(ex.check(put, st))                       # part of the stew
+        pot = k.utensils["pot0"]
+        st.objects[pot] = ObjectState("potato", "semi-finished", pot, (["potato"], 1, 0))
+        self.assertIn("it holds potato", ex.check(put, st))        # a second potato fits nothing
+        me.held_object = ObjectState("soup", "with_dish", me.position, ("boiled_potato_slices", 1, 9))
+        self.assertIn("no open order takes", ex.check(deliver, st))
+        me.held_object = ObjectState("soup", "with_dish", me.position, ("baked_carrot_soup", 1, 9))
+        self.assertIsNone(ex._wrong_delivery(st, me.held_object))
+        me.held_object = ObjectState("baked_carrot_soup", "ingredient", me.position)
+        self.assertIn("must be served on a dish", ex._wrong_delivery(st, me.held_object))
+
+    def test_recipe_guard_config_runs(self):
+        text = (ROOT / "configs/coop/days_ctx_guard.yaml").read_text()
+        self.assertEqual(text.count("recipe_guard: true"), 2)          # ego and partner
+        runs, _ = run("days_ctx_guard", run_seeds=[0], days=1, episodes_per_day=1, horizon=80,
+                      conditions=["tom_struct", "oracle"])
+        self.assertTrue((runs / "oracle/A/seed0/day01/ep01/summary.json").exists())
+
     def test_gate3_oracle_and_mismatched(self):
         runs, _ = run("persona_value_ctx", run_seeds=[0], horizon=200)
         sp = lambda c: json.loads((runs / f"{c}/A/seed0/day01/ep01/agent_log.json").read_text())["system_prompt"]

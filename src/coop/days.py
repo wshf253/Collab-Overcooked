@@ -473,7 +473,8 @@ def make_partner(cfg: DaysConfig, persona: str, context: Dict[str, Any]):
     p = cfg.partner
     agent = LLMPartner(p["backend"], card, load_library(), complexity=k, remind=p.get("remind", True),
                        enforce=p.get("enforce", False), max_tokens=p.get("max_tokens", 400),
-                       useful_starts_only=p.get("useful_starts_only", False))
+                       useful_starts_only=p.get("useful_starts_only", False),
+                       recipe_guard=p.get("recipe_guard", False))
     ctx = {key: v for key, v in context.items() if key not in ("index", "partner_index")}
     return LLMPartnerPlayer(agent, ctx), rules, None
 
