@@ -4,7 +4,7 @@
 #
 #   bash scripts/run_qwen38_days.sh configs/coop/days_llm.yaml --out outputs/days_llm --workers 16
 #
-# Everything after the config is passed to `python -m coop.days`.
+# Everything after the config is passed to `python -m coop.days` (COOP_MODULE=coop.decision: that module).
 # With ICRL_LLM_BASE_URL already set, no server is started and that endpoint is used.
 #
 # Several maps against ONE server (one GPU holds one 27B model, not three):
@@ -104,7 +104,7 @@ if [[ -n "${ICRL_LLM_API_KEY:-}" ]]; then export ICRL_PARTNER_API_KEY="${ICRL_PA
 echo "partner endpoint: $ICRL_PARTNER_BASE_URL ($ICRL_PARTNER_MODEL)"
 
 if [[ -z "${LAYOUTS:-}" ]]; then
-    "$PY" -m coop.days "$CONFIG" "$@" 2>&1 | tee "$LOG_DIR/run.log"
+    "$PY" -m "${COOP_MODULE:-coop.days}" "$CONFIG" "$@" 2>&1 | tee "$LOG_DIR/run.log"
     exit "${PIPESTATUS[0]}"
 fi
 

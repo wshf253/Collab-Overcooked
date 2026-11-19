@@ -1,0 +1,40 @@
+# One-decision test (coop.decision): does the partner change the right action, and does the
+# ego act on it? Two open orders: `other` (older, long timer) and `urgent` (short timer, urgent
+# from step 0). Partner: the scripted twin of a two-rule card, default_work whole plus
+# on_urgent takes (it switches to the urgent order) or keeps (it stays on its own order).
+# The pairs use disjoint ingredients, so the ego's first action shows which order it chose.
+# Pick the urgent dish from `--stage dishes --from-folder outputs/days_ctx_pilot`.
+#
+#   screen  scripted replay of both ego choices x both partners; keep switching starts (CPU)
+#   llm     the LLM ego on kept starts x 2 partners x {correct, swapped, none} description
+#   report  tables and the verdict
+name: decision_urgent
+layout: open_ing2_env
+menu: [boiled_potato_slices, baked_carrot_soup, sliced_carrot_and_potato_stew, baked_potato_soup, boiled_carrot_slices]
+horizon: 150                            # 100 cut off the payoff of choosing "other"
+view_radius: 2
+wrong_delivery_penalty: 20
+expiry_penalty: 20
+pairs:                                  # [urgent, other]
+  - [boiled_potato_slices, baked_carrot_soup]
+  - [boiled_carrot_slices, baked_potato_soup]
+urgent_limits: [50, 60, 70, 85]         # steps the urgent order may stay open (35-45: too tight for one cook)
+urgent_steps: 85                        # theta: urgent from step 0 (>= every urgent limit)
+other_limit: 250                        # never urgent within the horizon
+seeds: [0, 1, 2, 3]
+ego_slots: [0, 1]                       # both start positions
+min_gap: 1                              # score gap for "better choice"
+agent:                                  # as days_ctx (tom_struct); oracle_wants = the description
+  type: llm
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
+    timeout_s: 120
+  tom: true
+  tom_mode: structured
+  max_tokens: 400

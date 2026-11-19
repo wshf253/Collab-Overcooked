@@ -191,8 +191,11 @@ class ContinuousOrderEnv:
     # ------------------------------------------------------------------ #
     # Episode lifecycle
     # ------------------------------------------------------------------ #
-    def reset(self, seed: int) -> OvercookedState:
-        if self.order_mode == "controlled":
+    def reset(self, seed: int, sequence: Optional[List[str]] = None) -> OvercookedState:
+        """``sequence``: an explicit order sequence (coop.decision); otherwise drawn from the seed."""
+        if sequence is not None:
+            sequence = list(sequence)
+        elif self.order_mode == "controlled":
             sequence = make_controlled_sequence(self.menu, seed, self.max_orders)
         else:
             sequence = make_order_sequence(self.menu, seed, self.max_orders, self.no_repeat)

@@ -241,6 +241,16 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.26 One-decision test (`coop.decision`, built 2026-11-19, not yet run)
+To separate knowing what to do from finishing the dish: fixed starts with an urgent and a long
+order, a scripted twin that `takes` or `keeps` on urgent orders, and the ego told the correct,
+swapped or no partner description (`docs/coop-setting.md`, "One-decision test").
+Screen (scripted, CPU, this container): with horizon 150 and urgent limits 50–85, 33 of 64
+starts switch the better choice with the partner (`keeps` → take the urgent order, `takes` →
+the other one). The `boiled_carrot_slices` / `baked_potato_soup` pair switches most often
+(6–7 of 8 starts at limits 50–70). With horizon 100 or limits 35–45 few starts switched.
+Next: the LLM stage on the kept starts.
+
 ### 3.25 Recipe guard for a test run (`days_ctx_guard`, built 2026-11-19, not yet run)
 The pilot's feedback and files were dominated by the ego's recipe and delivery mistakes (§3.24).
 To test whether partner knowledge pays once those are removed, `recipe_guard: true` makes the

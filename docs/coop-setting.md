@@ -1022,6 +1022,29 @@ A refused action comes back as invalid with the reason, and guarded actions are 
 listed options. `days_ctx_guard.yaml` is `days_ctx` with the guard on both players; it asks
 whether knowing the partner shows in the score once the ego's own mistakes are removed.
 
+**One-decision test** (`coop.decision`, `configs/coop/decision_urgent.yaml`). Does the
+partner change the right action, and does the ego act on it?
+- **Start:** two open orders, `other` (older, timer 250) and `urgent` (timer 50–85, urgent
+  from step 0). The two dishes use disjoint ingredients, so the ego's first action shows which
+  order it chose. Horizon 150, radius 2, both start slots, 4 seeds.
+- **Partner:** the scripted twin of `default_work: whole` plus `on_urgent: takes` (switches
+  to the urgent order) or `keeps` (stays on its own order).
+- `--stage dishes --from-folder OUT`: per dish, orders delivered by the ego / partner,
+  expired, ego wrong deliveries (to pick an urgent dish the ego completes reliably).
+- `--stage screen` (CPU): a scripted cook committed to each order first, against both
+  partners. A start is kept only if the better choice (team score, gap `min_gap`) switches
+  with the partner. With horizon 100 or limits 35–45, few starts switched: the urgent order
+  expired whatever the ego did, or the horizon cut off the payoff of choosing `other`.
+- `--stage llm` (GPU, `COOP_MODULE=coop.decision scripts/run_qwen38_days.sh ...`): the LLM ego
+  on the kept starts, against both partners, told the correct description (the card's wants
+  lines, as `oracle`), the swapped one, or none. Per episode: the first committed action and
+  its order, urgent order delivered in time and by whom, recipe errors after the choice (the
+  recipe guard's checks, recorded, not enforced), wrong deliveries.
+- `--stage report` (also printed after each stage): the screen, the LLM table and a verdict:
+  no kept starts → change the partner behaviours; correct − max(swapped, none) below 15 points
+  of right first choices → a stronger ego on the same starts (new `--out`); right choices but
+  the chosen order delivered by the ego in under 70% → cooking competence.
+
 **Value check** (`configs/coop/persona_value.yaml`). Is knowing the partner worth points to
 the LLM ego? It compares `oracle` (told the card's "wants" lines) with `tom_struct`: one day
 of 4 full-menu episodes, 4 cards × 8 seeds, batch2, LLM partner. Read the "interaction-episode
