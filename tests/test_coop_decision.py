@@ -16,7 +16,7 @@ from coop.kitchen import Kitchen  # noqa: E402
 
 
 def small_cfg():
-    cfg = decision.load(ROOT / "configs/coop/decision_urgent.yaml")
+    cfg = decision.load(ROOT / "configs/coop/decision/urgent.yaml")
     cfg.update(pairs=[["boiled_carrot_slices", "baked_potato_soup"]], urgent_limits=[60], seeds=[0], ego_slots=[0])
     cfg["agent"] = dict(cfg["agent"], backend=dict(cfg["agent"]["backend"], type="mock"))
     return cfg

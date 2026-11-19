@@ -1022,7 +1022,7 @@ A refused action comes back as invalid with the reason, and guarded actions are 
 listed options. `days_ctx_guard.yaml` is `days_ctx` with the guard on both players; it asks
 whether knowing the partner shows in the score once the ego's own mistakes are removed.
 
-**One-decision test** (`coop.decision`, `configs/coop/decision_urgent.yaml`). Does the
+**One-decision test** (`coop.decision`, `configs/coop/decision/urgent.yaml`). Does the
 partner change the right action, and does the ego act on it?
 - **Start:** two open orders, `other` (older, timer 250) and `urgent` (timer 50–85, urgent
   from step 0). The two dishes use disjoint ingredients, so the ego's first action shows which

@@ -24,7 +24,7 @@ Stages (``--stage``):
             not move the first choice -> a stronger ego; the choice is right but the dish is not
             finished in time or is spoiled -> cooking competence.
 
-    PYTHONPATH=src:lib/overcooked_ai python -m coop.decision configs/coop/decision_urgent.yaml \\
+    PYTHONPATH=src:lib/overcooked_ai python -m coop.decision configs/coop/decision/urgent.yaml \\
         --stage screen --out outputs/decision_urgent
 """
 from __future__ import annotations
