@@ -241,6 +241,40 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.24 Learning pilot on context cards: no learning effect (`days_ctx_pilot`, 2026-11-19)
+**Setting:** Qwen ego and Qwen partner; cards A and B; 4 seeds; 5 days × 3 episodes plus 2
+held-out per day; slack 2.5, θ 25; no start guard. Held-out score, condition minus
+`tom_struct`, days 1–5 (mean ± SE over 8 runs):
+
+| condition | score | per card | alignment (points) |
+|---|---|---|---|
+| `generic_memory` | −0.8 ± 17.3 | A +27, B −29 | +1.5 ± 3.5 |
+| `memory_fb` | +1.0 ± 14.8 | A +24, B −22 | +3.3 ± 1.7 |
+| `swap_other` | +2.2 ± 14.5 | A +27, B −22 | +2.6 ± 2.6 |
+| `oracle` | **−27.5 ± 20.4** | A −13, B −43 | +7.6 ± 3.5 (A +14) |
+
+- **No learning curve.** No condition rises over the days.
+- **Interaction episodes are flat too:** `memory_fb` − `tom_struct` −1.0 ± 6.8.
+- **Noise floor:** on day 0, before any memory exists, the memory conditions differ from
+  `tom_struct` by −5 to −10 ± 16–20. Effects below about 30 points are not detectable with
+  8 runs.
+- **Knowing the card costs points.** `oracle` − `memory_fb` −28.5 ± 11.1. The ego follows the
+  wants lines a little (alignment +7.6, card A +14) and loses score doing so.
+- **Not partner-specific.** `swap_other` ≈ `memory_fb` (score +1.2 ± 6.6, alignment −0.7).
+  The A+ / B− split is the same in all three memory conditions, so it comes from having
+  notes at all, not from the partner.
+- **The files carry the partner's card, but the ego does not use them.**
+  - Knowledge probe on exposed rules: `memory_fb` 44–56%, `generic_memory` 59–62% (chance
+    33%).
+  - `swap_other` falls from 49% to 16% by day 5: it answers for the other card, as its file
+    says.
+  - This is the plan §11 row "knowledge acquired but not used".
+- **Transfer table** (held-out completion, seen / unseen dishes): unseen dishes are completed
+  more often in every condition, including `tom_struct` (81 / 89). Dish difficulty, not
+  transfer.
+- **Expired orders:** 1.4–1.7 per episode (reference 0.6). Partner adherence on held-out
+  episodes: 69–81%.
+
 ### 3.23 After re-scoring: competence first (2026-11-18)
 **Gate 1 re-scored with the fixed checks:**
 - **Pass:** A `clears` 94%, A `continues` 81%, B `whole` 72%, B `keeps` 89%.
