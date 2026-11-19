@@ -330,11 +330,46 @@ def format_report(rep: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def show_run(out: Path, condition: str, persona: str, seed: int, day: Optional[int] = None) -> str:
+    """One run's partner file after a day and its knowledge-probe answers (for reading what
+    the ego learned)."""
+    run = out / "runs" / condition / persona / f"seed{seed}"
+    days = sorted(int(d.name[3:]) for d in run.glob("day*") if d.name != "day00")
+    if not days:
+        return f"no days in {run}"
+    d = day or days[-1]
+    lines = [f"== {condition} {persona} seed{seed}, after day {d} =="]
+    eps = sorted((run / f"day{d:02d}").glob("ep*/memory_after.json"))
+    mem = json.loads(eps[-1].read_text()) if eps else {}
+    lines.append("-- partner file --")
+    lines.append(mem.get("partner_model") or "(none)")
+    if mem.get("notes"):
+        lines.append("-- notes --")
+        lines += [f"- {n.get('notes')}" for n in mem["notes"][-3:]]
+    kp = _load(run / f"day{d:02d}" / "knowledge_probe.json")
+    if kp:
+        lines.append("-- knowledge probe (answer | truth | group) --")
+        for r in kp.get("rows", []):
+            lines.append(f"{r['id']:<16} {'OK ' if r['correct'] else 'no '} {str(r['answer'])[:70]} | {str(r['truth'])[:70]} | {r['group']}")
+    fb = _load(run / f"day{d:02d}" / "feedback.json")
+    if fb:
+        lines.append("-- partner's feedback --")
+        lines.append(fb.get("text") or "")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("run_dir", type=Path)
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--show", nargs=3, metavar=("CONDITION", "PERSONA", "SEED"),
+                    help="print one run's partner file, probe answers and feedback instead of the report")
+    ap.add_argument("--day", type=int, help="--show: after this day (default: the last)")
     args = ap.parse_args(argv)
+    if args.show:
+        cond, persona, seed = args.show
+        print(show_run(args.run_dir, cond, persona, int(seed), args.day))
+        return
     rep = report(args.run_dir)
     print(format_report(rep))
     if args.out:
