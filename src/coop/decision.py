@@ -362,6 +362,43 @@ def report(cfg, out: Path) -> str:
                          f"{statistics.mean(r['score'] for r in rs):>8.1f}"
                          f"{statistics.mean(len(r['recipe_errors']) for r in rs):>12.2f}"
                          f"{statistics.mean(r['ego_wrong_deliveries'] for r in rs):>11.2f}")
+    # what it was told vs what it chose: the first decision comes before the partner acts, so
+    # the partner's true behaviour does not enter it; pool over partners by the description told
+    lines.append("\nFirst choice by what the ego was told (pooled over the true partner; ideal: told keeps ->"
+                 " urgent 100%, told takes -> urgent 0%)")
+    lines.append(f"{'told':<8}{'pair (urgent / other)':<52}{'n':>4}{'first = urgent':>17}{'at t=0':>13}")
+    told_rows = defaultdict(list)
+    for r in res:
+        told_rows[(r.get("told") or "none", r["start"]["urgent"] + " / " + r["start"]["other"])].append(r)
+        told_rows[(r.get("told") or "none", "all")].append(r)
+    pairs = sorted({k[1] for k in told_rows if k[1] != "all"}) + ["all"]
+    for tl in ("keeps", "takes", "none"):
+        for pr in pairs:
+            rs = told_rows.get((tl, pr), [])
+            if rs:
+                lines.append(f"{tl:<8}{pr:<52}{len(rs):>4}{_rate(r['first'] is not None and r['first']['order'] == 'urgent' for r in rs):>17}"
+                             f"{_rate(r['first'] is not None and r['first']['t'] == 0 for r in rs):>13}")
+    pu = lambda tl: (lambda rs: 100 * sum(r["first"] is not None and r["first"]["order"] == "urgent" for r in rs) / len(rs)
+                     if rs else float("nan"))(told_rows.get((tl, "all"), []))
+    effect = pu("keeps") - pu("takes")
+    lines.append(f"description effect on the first choice: told keeps - told takes = {effect:+.0f} points "
+                 f"(100 = follows it fully, 0 = ignores it); any description vs none: "
+                 f"{(pu('keeps') + pu('takes')) / 2 - pu('none'):+.0f}")
+
+    # outcome, paired per start and partner
+    lines.append("\nTeam score, paired per start (mean +- SE over starts)")
+    cell = {(r["start"]["id"], r["partner"], r["description"]): r for r in res}
+
+    def paired(b, d1, d2):
+        xs = [cell[(sid, b, d1)]["score"] - cell[(sid, b, d2)]["score"] for sid in {k[0] for k in cell}
+              if (sid, b, d1) in cell and (sid, b, d2) in cell]
+        if len(xs) < 2:
+            return "-"
+        return f"{statistics.mean(xs):+6.1f} +- {statistics.stdev(xs) / len(xs) ** 0.5:4.1f} (n={len(xs)})"
+    for b in BEHAVIOURS:
+        lines.append(f"  partner {b}: correct - none {paired(b, 'correct', 'none')}; correct - swapped "
+                     f"{paired(b, 'correct', 'swapped')}")
+
     # knowing vs finishing: among right first choices, was the chosen order finished in time by the ego?
     lines.append("\nAfter a right first choice (all descriptions): did the ego finish what it chose?")
     right = [r for r in res if r["right"]]
@@ -374,33 +411,46 @@ def report(cfg, out: Path) -> str:
     lines.append(f"  chosen order delivered by the ego: {_rate(fin)}; with a recipe error after the choice: "
                  f"{_rate(bool(r['recipe_errors']) for r in right)}; wrong delivery: "
                  f"{_rate(r['ego_wrong_deliveries'] > 0 for r in right)}")
+    lines.append("\nRecipe errors after the first choice, per episode, by kind and by the order the action belonged to")
+    lines.append(f"{'description':<12}{'partner':<8}{'load':>7}{'start':>7}{'urgent':>8}{'other':>7}{'neither':>9}")
+    for d in DESCRIPTIONS:
+        for b in BEHAVIOURS:
+            rs = by.get((d, b), [])
+            if not rs:
+                continue
+            errs = [e for r in rs for e in r["recipe_errors"]]
+            n = len(rs)
+            cnt = lambda f: sum(1 for e in errs if f(e)) / n
+            lines.append(f"{d:<12}{b:<8}{cnt(lambda e: e['action'].startswith('put_obj')):>7.2f}"
+                         f"{cnt(lambda e: not e['action'].startswith('put_obj')):>7.2f}"
+                         f"{cnt(lambda e: e['order'] == 'urgent'):>8.2f}{cnt(lambda e: e['order'] == 'other'):>7.2f}"
+                         f"{cnt(lambda e: e['order'] is None):>9.2f}")
     # verdict
-    acc = {d: [r["right"] for r in by.get((d, "all"), [])] for d in DESCRIPTIONS}
-    pc = lambda xs: 100 * sum(xs) / len(xs) if xs else float("nan")
-    lines.append("\nVerdict (first choice right: correct %.0f%%, swapped %.0f%%, none %.0f%%):"
-                 % (pc(acc["correct"]), pc(acc["swapped"]), pc(acc["none"])))
-    if pc(acc["correct"]) - max(pc(acc["none"]), pc(acc["swapped"])) < 15:
-        lines.append("  the correct description does not move the first choice much -> benchmark a stronger "
-                     "ego on these starts (same config with another agent backend, new --out)")
-    elif fin and pc(fin) < 70:
-        lines.append("  the ego chooses right with the correct description but often does not finish the "
-                     "chosen order -> cooking competence")
-    else:
+    lines.append(f"\nVerdict (description effect {effect:+.0f} points; chosen order finished {_rate(fin)}):")
+    if effect < 50:
+        lines.append("  the ego follows the description only partly -> benchmark a stronger ego on these starts "
+                     "(same config with another agent backend, new --out)")
+    if fin and 100 * sum(fin) / len(fin) < 70:
+        lines.append("  after a right choice the ego often does not finish the chosen order -> cooking competence")
+    if effect >= 50 and (not fin or 100 * sum(fin) / len(fin) >= 70):
         lines.append("  the ego uses the description and finishes the dish: knowing the partner pays here")
     return "\n".join(lines)
 
 
 def dishes_table(folder) -> str:
     """Per dish in a runner folder: orders, ego / partner deliveries, expiries, ego wrong deliveries."""
-    acc: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"orders": 0, "ego": 0, "partner": 0, "expired": 0,
-                                                          "ego_wrong": 0, "steps": []})
-    for f in sorted(Path(folder).glob("runs/*/*/seed*/*/ep*/summary.json")):
+    acc: Dict[Tuple[str, str], Dict[str, Any]] = defaultdict(lambda: {"orders": 0, "ego": 0, "partner": 0,
+                                                                      "expired": 0, "ego_wrong": 0, "steps": []})
+    files = sorted(Path(folder).glob("runs/*/*/seed*/*/ep*/summary.json")) + \
+        sorted(Path(folder).glob("runs/*/*/seed*/*/eval*/summary.json"))
+    for f in files:
         if f.parents[4].name.startswith("_"):
             continue
         s = json.loads(f.read_text())
         ego = s.get("ego_index", 0)
+        kind = "held-out" if f.parent.name.startswith("eval") else "interaction"
         for o in s.get("orders", []):
-            a = acc[o["name"]]
+            a = acc[(kind, o["name"])]
             if o.get("completed_t") is not None:
                 a["orders"] += 1
                 a["ego" if o.get("delivered_by") == ego else "partner"] += 1
@@ -410,12 +460,12 @@ def dishes_table(folder) -> str:
                 a["expired"] += 1
         for d in s.get("deliveries", []):
             if d["agent"] == ego and not d["correct"]:
-                acc[d["item"]]["ego_wrong"] += 1
+                acc[(kind, d["item"])]["ego_wrong"] += 1
     lines = [f"per dish in {folder} (closed orders only)",
-             f"{'dish':<34}{'orders':>7}{'by ego':>8}{'by partner':>11}{'expired':>9}{'ego wrong del':>15}{'median steps':>14}"]
-    for d, a in sorted(acc.items(), key=lambda kv: -(kv[1]["ego"] / max(1, kv[1]["orders"]))):
+             f"{'episodes':<13}{'dish':<34}{'orders':>7}{'by ego':>8}{'by partner':>11}{'expired':>9}{'ego wrong del':>15}{'median steps':>14}"]
+    for (kind, d), a in sorted(acc.items(), key=lambda kv: (kv[0][0] != "interaction", -(kv[1]["ego"] / max(1, kv[1]["orders"])))):
         steps = [x for x in a["steps"] if x is not None]
-        lines.append(f"{d:<34}{a['orders']:>7}{a['ego']:>8}{a['partner']:>11}{a['expired']:>9}{a['ego_wrong']:>15}"
+        lines.append(f"{kind:<13}{d:<34}{a['orders']:>7}{a['ego']:>8}{a['partner']:>11}{a['expired']:>9}{a['ego_wrong']:>15}"
                      f"{(statistics.median(steps) if steps else float('nan')):>14.0f}")
     lines.append("ego wrong del counts the wrongly delivered item, not the order it was meant for.")
     return "\n".join(lines)

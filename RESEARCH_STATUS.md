@@ -241,15 +241,32 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
-### 3.26 One-decision test (`coop.decision`, built 2026-11-19, not yet run)
-To separate knowing what to do from finishing the dish: fixed starts with an urgent and a long
-order, a scripted twin that `takes` or `keeps` on urgent orders, and the ego told the correct,
-swapped or no partner description (`docs/coop-setting.md`, "One-decision test").
-Screen (scripted, CPU, this container): with horizon 150 and urgent limits 50–85, 33 of 64
-starts switch the better choice with the partner (`keeps` → take the urgent order, `takes` →
-the other one). The `boiled_carrot_slices` / `baked_potato_soup` pair switches most often
-(6–7 of 8 starts at limits 50–70). With horizon 100 or limits 35–45 few starts switched.
-Next: the LLM stage on the kept starts.
+### 3.26 One-decision test: the partner description changes the right action, Qwen half-follows it (`decision_urgent`, 2026-11-19)
+Fixed starts with an urgent and a long order, a scripted twin that `takes` or `keeps` on urgent
+orders, and the Qwen ego told the correct, swapped or no partner description
+(`docs/coop-setting.md`, "One-decision test"). Horizon 150, urgent limits 50–85.
+- **Screen:** 38 of 64 starts switch the better choice with the partner (`keeps` → take the
+  urgent order, `takes` → the other one). `boiled_carrot_slices` / `baked_potato_soup`
+  switches in 27 of 32, `boiled_potato_slices` / `baked_carrot_soup` in 11 of 32.
+- **First choice** (from the report's table; the first decision comes before the partner acts):
+  - with no description Qwen never starts on the urgent order (0 of 76): it takes the older
+    order first and ignores the timer;
+  - told `keeps` (take the urgent order yourself): urgent first 57%; told `takes`: 37%;
+  - so any description pushes it toward the urgent order (+47 points), but the content moves
+    it only +20 points (ideal +100).
+- **Score** (38 starts each): partner `keeps`, correct 48.9 vs swapped 30.5 vs none 14.7;
+  urgent order on time 68% / 39% / 13%. Partner `takes`, correct 53.7 vs swapped 58.9 vs
+  none 61.6: the description sometimes makes the ego duplicate the urgent order.
+- **Knowing the partner pays where Qwen's default is wrong:** +34 points with the `keeps`
+  partner. This is the first setting where partner knowledge clearly moves the score.
+- **Finishing:** after a right first choice the ego delivered the chosen order 82% of the
+  time, but 84% of those episodes had a recipe error later (2.6–6.1 per episode; the most
+  with the correct `takes` description, whose wants line says "prepare the next order").
+- **The `dishes` table first missed the held-out episodes**, where the two held-back dishes are
+  ordered; fixed. In interaction episodes the ego delivered `boiled_carrot_slices` wrongly 118
+  times (it is not on that menu), so the ego makes it readily.
+- **Verdict:** the ego follows the description only partly → benchmark a stronger ego on the
+  same starts. Cooking is good enough to finish the chosen order (82%).
 
 ### 3.25 Recipe guard for a test run (`days_ctx_guard`, built 2026-11-19, not yet run)
 The pilot's feedback and files were dominated by the ego's recipe and delivery mistakes (§3.24).
