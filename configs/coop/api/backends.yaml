@@ -1,0 +1,47 @@
+# Hosted-API backends (docs/coop-setting.md, "API backends"). Use one with
+#   backend: {ref: NAME}           in a config (other keys override the entry), or
+#   --ego-backend NAME / --partner-backend NAME   on coop.days and coop.decision.
+# Keys are never written here: api_key_env names the environment variable that holds the key.
+# Run `python -m coop.check --api NAME` (smoke test) before any paid run; it reports every
+# parameter the API rejected and the usage fields it returned.
+#
+# reasoning_allowance: added to each caller's max_tokens (sized for the visible JSON reply),
+# because reasoning tokens count against the same cap. max_concurrency: calls in flight at
+# once, shared by every process on the machine (set it from the account's rate limit).
+
+astra:
+  type: openai
+  base_url: https://api.openai.com/v1
+  model: gpt-6-astra
+  api_key_env: OPENAI_API_KEY
+  reasoning_effort: low          # plan: the model rejects none / minimal (to verify in the smoke test)
+  send_sampling: false           # no temperature / top_p / seed
+  json_mode: true                # response_format json_object; set false if the smoke test shows a 400
+  prompt_cache_key: auto         # a key per system prompt; remove if the smoke test shows a 400
+  expects_reasoning: true
+  reasoning_allowance: 3000
+  max_concurrency: 8
+  timeout_s: 300
+  max_retries: 6
+  price: astra
+
+opus:
+  type: anthropic
+  base_url: https://api.anthropic.com/v1
+  model: claude-opus-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  # Checked against the Claude API reference (2026-11): API version 2026-10-21; thinking is
+  # always on for this model (no `thinking` field: it runs adaptive; disabling it is a 400),
+  # depth is set by output_config.effort (default medium); sampling parameters are rejected.
+  anthropic_version: "2026-10-21"
+  anthropic_params:
+    output_config: {effort: low}
+  # Refusal fallbacks (server-side `fallbacks`) are left off on purpose: a fallback answers with
+  # another model, which would mix models inside one condition. Refusals are counted instead
+  # (finish_reason "refusal", usage.refusals).
+  expects_reasoning: true
+  reasoning_allowance: 3000
+  max_concurrency: 8
+  timeout_s: 300
+  max_retries: 6
+  price: opus

@@ -33,6 +33,8 @@ import argparse
 import contextlib
 import io
 import json
+import os
+import sys
 import statistics
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -239,8 +241,8 @@ def _check_out(cfg, out: Path) -> None:
     f = out / "config.json"
     if f.exists():
         old = json.loads(f.read_text())
-        if {k: v for k, v in old.items() if k != "agent"} != {k: v for k, v in cfg.items() if k != "agent"}:
-            raise SystemExit(f"{f} holds a different config: use a new --out")
+        if old != json.loads(json.dumps(cfg)):
+            raise SystemExit(f"{f} holds a different config (or ego backend): use a new --out")
     f.write_text(json.dumps(cfg, indent=1))
 
 
@@ -278,8 +280,14 @@ def _llm_job(cfg, out: str, start, behaviour: str, desc: str) -> Dict[str, Any]:
     told = {"correct": behaviour, "swapped": [b for b in BEHAVIOURS if b != behaviour][0], "none": None}[desc]
     if told:
         spec["oracle_wants"] = description(told, kit)
+    from .llm import BudgetExceeded
     agent = make_agent(spec)
-    r = play(cfg, start, behaviour, agent, llm=True)
+    try:
+        r = play(cfg, start, behaviour, agent, llm=True)
+    except BudgetExceeded:
+        return {"status": "budget"}           # nothing written: the episode is replayed on resume
+    if agent.usage.extended:              # API backends: cost and tokens for the report
+        r["usage"] = agent.usage.as_dict()
     r.update(description=desc, told=told)
     d.mkdir(parents=True, exist_ok=True)
     (d / "result.json").write_text(json.dumps(r, indent=1, default=str))
@@ -302,11 +310,14 @@ def llm_stage(cfg, out: Path, workers: int = 1, max_starts: Optional[int] = None
     res = []
     if workers <= 1:
         res = [_llm_job(cfg, str(out), *j) for j in jobs]
+        res = [r for r in res if r.get("status") != "budget"]
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             futs = [pool.submit(_llm_job, cfg, str(out), *j) for j in jobs]
             for i, f in enumerate(as_completed(futs), 1):
-                res.append(f.result())
+                r = f.result()
+                if r.get("status") != "budget":
+                    res.append(r)
                 if i % 10 == 0 or i == len(futs):
                     print(f"{i}/{len(futs)} episodes done", flush=True)
     return res
@@ -425,6 +436,12 @@ def report(cfg, out: Path) -> str:
                          f"{cnt(lambda e: not e['action'].startswith('put_obj')):>7.2f}"
                          f"{cnt(lambda e: e['order'] == 'urgent'):>8.2f}{cnt(lambda e: e['order'] == 'other'):>7.2f}"
                          f"{cnt(lambda e: e['order'] is None):>9.2f}")
+    from .costs import _model_of, format_costs, ledger_total
+    cost = format_costs([(_model_of(cfg["agent"].get("backend")), f"{r['description']}/{r['partner']}",
+                          r.get("usage") or {}) for r in res], ledger_total(out))
+    if cost:
+        lines.append("")
+        lines += cost
     # verdict
     lines.append(f"\nVerdict (description effect {effect:+.0f} points; chosen order finished {_rate(fin)}):")
     if effect < 50:
@@ -482,6 +499,9 @@ def main(argv=None):
     ap.add_argument("--pairs", nargs="+", help="override the config's pairs: urgent:other ...")
     ap.add_argument("--urgent-limits", nargs="+", type=int, help="override the config's urgent_limits")
     ap.add_argument("--horizon", type=int)
+    ap.add_argument("--ego-backend", help="registry name (configs/coop/api/backends.yaml) for the ego")
+    ap.add_argument("--max-cost", type=float, help="USD: stop starting API calls once this folder's ledger reaches "
+                    "it; rerun the same command to resume")
     args = ap.parse_args(argv)
     if args.stage == "dishes":
         if not args.from_folder:
@@ -498,6 +518,16 @@ def main(argv=None):
     if not args.out:
         ap.error("--out is required")
     out = Path(args.out)
+    from .llm import API_TYPES, CostLedger, resolve_spec
+    if args.ego_backend:
+        cfg["agent"] = dict(cfg["agent"], backend=resolve_spec({"ref": args.ego_backend}))
+    if args.stage == "llm" and (resolve_spec(cfg["agent"].get("backend") or {}).get("type") in API_TYPES
+                                or args.max_cost is not None):
+        out.mkdir(parents=True, exist_ok=True)
+        os.environ["COOP_COST_LEDGER"] = str((out / "cost_ledger.tsv").resolve())
+        if args.max_cost is not None:
+            os.environ["COOP_MAX_COST"] = str(args.max_cost)
+            print(f"budget: ${args.max_cost:.2f}; spent so far in this folder ${CostLedger.total():.2f}")
     for u, o in cfg["pairs"]:
         env, st = make_env(cfg, {"urgent": u, "other": o, "limit": cfg["urgent_limits"][0], "slot": 0, "seed": 0})
         kit = Kitchen(env.mdp, 0, st)
@@ -509,6 +539,12 @@ def main(argv=None):
         screen(cfg, out)
     elif args.stage == "llm":
         llm_stage(cfg, out, args.workers, args.max_starts)
+        if os.environ.get("COOP_COST_LEDGER"):
+            print(f"API cost of this folder so far: ${CostLedger.total():.2f}")
+        n_jobs = len([1 for _ in (out / "llm").glob("*/*/*/result.json")]) if (out / "llm").exists() else 0
+        if os.environ.get("COOP_MAX_COST") and CostLedger.total() >= float(os.environ["COOP_MAX_COST"]):
+            print(f"stopped at the budget with {n_jobs} episodes done; rerun the same command (higher --max-cost) "
+                  "to resume", file=sys.stderr)
     text = report(cfg, out)
     (out / "report.txt").write_text(text)
     print(text)

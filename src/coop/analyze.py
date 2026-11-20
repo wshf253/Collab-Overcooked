@@ -285,6 +285,9 @@ def decision_stats(log: Dict[str, Any]) -> Dict[str, Any]:
             "latency_per_call": statistics.fmean(latency) if latency else None,
             "prompt_tokens_per_call": statistics.fmean(c.get("prompt_tokens") or 0 for c in all_calls) if all_calls else None,
             "completion_tokens_per_call": statistics.fmean(c.get("completion_tokens") or 0 for c in all_calls) if all_calls else None,
+            # API reasoning models: reasoning is expected, reported per call instead of as "thinking"
+            "reasoning_tokens_per_call": statistics.fmean(c.get("reasoning_tokens") or 0 for c in all_calls)
+            if any("reasoning_tokens" in c for c in all_calls) else None,
             "invalid_reasons": reasons, "invalid_actions": bad_actions, "fallback_pairs": fallback_actions, "wait_share": len(waits) / len(chosen) if chosen else None,
             "mean_wait_chosen": statistics.fmean(lengths) if lengths else None,
             "waits_full": full, "waits_ended_by_partner": early,
@@ -411,6 +414,9 @@ def analyse(out) -> Dict[str, Any]:
                 "latency_per_call": _mean_se([d["latency_per_call"] for d in ds])["mean"],
                 "prompt_tokens_per_call": _mean_se([d["prompt_tokens_per_call"] for d in ds])["mean"],
                 "completion_tokens_per_call": _mean_se([d["completion_tokens_per_call"] for d in ds])["mean"],
+                "reasoning_tokens_per_call": _mean_se([d["reasoning_tokens_per_call"] for d in ds
+                                                       if d.get("reasoning_tokens_per_call") is not None])["mean"],
+                "refusals": sum(u.get("refusals", 0) for u in usage),
                 "action_mix": dict(sum((d["action_mix"] for d in ds), Counter())),
                 "invalid_reasons": dict(sum((d["invalid_reasons"] for d in ds), Counter()).most_common()),
                 "invalid_actions": dict(sum((d["invalid_actions"] for d in ds), Counter()).most_common()),
@@ -905,6 +911,12 @@ def format_report(rep: Dict[str, Any]) -> str:
     lines.append("\n== LLM health ==")
     lines += [f"  {c}/{p}: thinking {r['thinking']}, truncated {r['truncated']}, errors {r['errors']}"
               for c, p, r in health] or ["  no thinking, truncated or failed replies"]
+    reasoning = [(c, p, r) for c, rows in rep["conditions"].items() for p, r in rows.items()
+                 if r.get("reasoning_tokens_per_call") is not None]
+    if reasoning:
+        lines.append("  reasoning models (reasoning is expected, not a failure): reasoning tokens per call")
+        lines += [f"    {c}/{p}: {r['reasoning_tokens_per_call']:.0f}, refusals {r.get('refusals', 0)}"
+                  for c, p, r in reasoning]
     lines.append("\nfull+ready = waits that ran their full length while finished food sat in a utensil "
                  "the ego can reach (from the next prompt)")
     return "\n".join(lines)
@@ -932,6 +944,11 @@ def main(argv=None):
     for w in warnings:
         print(w)
     print(format_report(rep))
+    from .costs import days_folder_costs
+    for d in args.run_dirs:
+        cost = days_folder_costs(d)
+        if cost:
+            print("\n" + (f"[{d}] " if len(args.run_dirs) > 1 else "") + "\n".join(cost))
     if args.out:
         args.out.write_text(json.dumps(rep, indent=1, default=str))
         print(f"wrote {args.out}")

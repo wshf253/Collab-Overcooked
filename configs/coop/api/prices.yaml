@@ -1,0 +1,24 @@
+# USD per million tokens. Recheck the providers' price pages before every paid run.
+# input: uncached prompt tokens; cached_input: prompt tokens read from the cache; cache_write:
+# prompt tokens written to the cache (Anthropic, 5-minute TTL = 1.25 x input); output: output
+# tokens. reasoning_in_output: the provider's output count already includes reasoning tokens
+# (then they are not added twice); the smoke test checks it.
+
+astra:            # from API_BACKEND_PLAN.md (not checked here)
+  input: 10.00
+  cached_input: 1.00
+  output: 50.00
+  reasoning_in_output: true
+
+opus:             # claude-opus-5-5, checked against the Claude API reference (2026-11)
+  input: 4.00
+  cached_input: 0.20
+  cache_write: 5.00
+  output: 20.00
+  reasoning_in_output: true      # output_tokens includes thinking (billed as output)
+
+argon:            # optional (W6); introductory rate, rising to 4.00 / 0.20 / 20.00
+  input: 2.00
+  cached_input: 0.10
+  output: 10.00
+  reasoning_in_output: true

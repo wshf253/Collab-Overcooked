@@ -1076,6 +1076,104 @@ bash scripts/run_qwen38_days.sh configs/coop/days_persona.yaml --conditions tom_
 python -m coop.learning outputs/persona_pilot --out outputs/persona_pilot/learning.json
 ```
 
+## API backends (`docs/API_BACKEND_PLAN.md`, W1–W4)
+
+Hosted models as the ego (or the LLM partner), next to the local vLLM server. Code:
+`src/coop/llm.py` (backends), `src/coop/costs.py` (report lines), `src/coop/check.py --api`
+(smoke test), `scripts/run_api.sh` (lab runs). Configs: `configs/coop/api/backends.yaml`
+(registry) and `configs/coop/api/prices.yaml`.
+
+**Backend types:**
+
+| type | API | what it sends |
+|---|---|---|
+| `openai_compat` | local vLLM (unchanged) | as before |
+| `openai` | OpenAI Chat Completions | `max_completion_tokens` = caller cap + `reasoning_allowance`; `reasoning_effort`; no `temperature` / `top_p` / `seed` (`send_sampling: false`); `response_format: json_object` (`json_mode`); `prompt_cache_key: auto` = a hash of the system prompt |
+| `anthropic` | Anthropic Messages (`POST /v1/messages`) | headers `x-api-key`, `anthropic-version` (`2026-10-21`); the system message as a top-level `system` text block with `cache_control: ephemeral`; `max_tokens` = caller cap + allowance; `anthropic_params` merged into the body as given (registry: `output_config: {effort: low}`); no sampling parameters; no response-format parameter (the prompt and `parse_json` handle JSON) |
+| `mock` | none | as before |
+
+**Use:** `backend: {ref: opus}` in a config (other keys override the entry), or
+`--ego-backend NAME` (and `--partner-backend NAME` on `coop.days`). The override replaces the ego
+backend in every condition; the folder's `config.json` then holds the resolved spec with its
+`ref`. Keys are never in a config or an output: `api_key_env` names the variable.
+
+**Per call** (`agent_log.json` calls, `knowledge_probe.json`, `feedback.json`, only for API
+backends, so old outputs keep their shape): `cached_tokens`, `cache_write_tokens`,
+`reasoning_tokens`, `cost_usd`, `retries`, `rate_limited_s`, `served_model`, and
+`missing_usage` when the response lacked a usage field. `llm_usage` in `summary.json` sums
+them and adds `refusals`. `prompt_tokens` is always the whole prompt (cached and written
+included). Reasoning models (`expects_reasoning: true`) do not count as "thinking" in the
+health check; `coop.analyze` prints reasoning tokens per call instead.
+
+**Field mapping:**
+- OpenAI: `prompt_tokens_details.cached_tokens` → `cached_tokens`,
+  `completion_tokens_details.reasoning_tokens` → `reasoning_tokens`, `message.refusal` →
+  finish reason `refusal`.
+- Anthropic: `input_tokens` (the uncached rest) + `cache_read_input_tokens` +
+  `cache_creation_input_tokens` = `prompt_tokens`; `cache_read_input_tokens` → `cached_tokens`;
+  `cache_creation_input_tokens` → `cache_write_tokens`; `output_tokens_details.thinking_tokens`
+  → `reasoning_tokens`; `text` blocks → the reply; `thinking` blocks → `reasoning` (empty with
+  the default display); `stop_reason` `max_tokens` → `length`, `refusal` → `refusal`.
+
+**Retries:** 429, 500, 502, 503, 504 and 529, with `Retry-After` when sent, else exponential
+backoff; `max_retries` 6 and `timeout_s` 300 by default for API types. A 429 for a spend cap
+(`enforced_spend_limit_reached`) and every other 4xx are not retried; the error text is kept
+with the key removed.
+
+**Concurrency:** `max_concurrency` is a limit shared by every process on the machine (one lock
+file per slot under `$COOP_LOCK_DIR` or the temp dir). The runners' `--workers` are processes,
+so a per-process semaphore would not hold the limit.
+
+**Cost and budget:** cost per call = uncached input × input + cached × cached input + written ×
+cache write + output × output price (`prices.yaml`; reasoning is not added again when
+`reasoning_in_output: true`). Every API call is appended to the folder's `cost_ledger.tsv`.
+`--max-cost USD` (`coop.days`, `coop.decision`): once the ledger reaches it, no new call starts.
+Runs stop with status `budget` (a `budget.log` instead of `error.log`), the interrupted episode
+has no summary, and rerunning the same command with the same `--out` resumes. Calls already
+in flight finish, so the total can overshoot by about `max_concurrency` calls. Reports
+(`coop.learning`, `coop.analyze`, `coop.decision --stage report`) end with cost per model and
+condition, the total in the logs and the ledger total.
+
+**Smoke test** before any paid run: `python -m coop.check --api NAME --planned-calls N` sends the 4
+decision prompts of `tests/fixtures/api_decision_prompts.json` (captured from a mock run of
+`configs/coop/decision/urgent.yaml`), repeats the first (cache check), probes optional
+parameters, and prints per call: JSON valid, action parsed and in VALID_ACTIONS, input / cached /
+output / reasoning tokens, latency, finish reason, cost; then the rejected parameters, missing
+usage fields, whether output counts include reasoning, and the projected cost. Written to
+`outputs/api_check/<name>.json`. Exit code 1 if any call failed or gave an invalid action.
+
+**Checked against the Claude API reference (2026-11), for `claude-opus-5-5`:** API version
+`2026-10-21`; thinking is always on (no `thinking` field runs adaptive; `{type: disabled}` is a
+400); depth via `output_config.effort` (`low` … `max`, default `medium`); `temperature`,
+`top_p`, `top_k` are rejected; no assistant prefill; the minimum cacheable prefix is far below
+the ~1,600-token decision system prompt; prices $4 / $0.20 cached / $5 cache write (5 min) /
+$20 output per million; `stop_reason: refusal` exists. Refusal fallbacks (`fallbacks`) are
+deliberately not sent: a fallback answers with another model, which would mix models within a
+condition; refusals are counted instead.
+
+**To verify with the smoke test (not assumed):** for Astra, whether `response_format`,
+`prompt_cache_key` and `reasoning_effort: low` are accepted, the names of the cached and
+reasoning token fields, the prices; for both, whether output counts include reasoning, whether
+the repeated prompt is read from the cache, and the account's rate limits (set
+`max_concurrency` from them). Record the results here after the smoke test.
+
+**Lab runs:** `scripts/run_api.sh` loads the keys from `~/.coop_api_env` (lines such as
+`export ANTHROPIC_API_KEY=...`; must be `chmod 600`, the script refuses it otherwise) unless they
+are already exported. Without `QWEN=1` it runs the module (`COOP_MODULE`, default `coop.days`)
+directly: an API ego with the scripted twin partner needs no GPU (`lab-run --new --gpus 0`).
+With `QWEN=1` it serves Qwen through `scripts/run_qwen38_days.sh` for the LLM partner, and the
+ego stays on the API. The server must reach `api.openai.com` / `api.anthropic.com` over HTTPS;
+the smoke test shows it.
+
+**Deviations from the plan:**
+- the registry and price table are in `configs/coop/api/`, not `configs/coop/` (every top-level
+  file there is loaded as a `coop.days` config by the tests);
+- `max_concurrency` and the budget work across processes (lock files, a ledger file), since the
+  runners use process pools;
+- `anthropic_version` is `2026-10-21` (checked), not `2023-06-01`;
+- `coop.decision` has `--ego-backend` but no `--partner-backend` (its partner is the scripted twin);
+- W6 (Gemini) and W7 (batch pricing) are not built.
+
 ## Pooling seeds (`coop.analyze` with several folders)
 
 Folders of the same config run on different run seeds (e.g. a replication) can be

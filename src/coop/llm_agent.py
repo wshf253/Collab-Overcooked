@@ -546,7 +546,7 @@ class LLMAgent(Agent):
         self.calls.append({"t": t, "kind": kind, "user": messages[-1]["content"], "response": r.text,
                            "error": r.error, "latency_s": round(r.latency_s, 3),
                            "prompt_tokens": r.prompt_tokens, "completion_tokens": r.completion_tokens,
-                           "thinking": r.thinking, "finish_reason": r.finish_reason})
+                           "thinking": r.thinking, "finish_reason": r.finish_reason, **r.api_fields()})
         return parsed, r.text
 
     def _decide(self, state, t):
@@ -705,7 +705,7 @@ class LLMAgent(Agent):
         parsed = parse_json(r.text)
         answers = (parsed or {}).get("answers") if isinstance(parsed, dict) else None
         return {"answers": answers if isinstance(answers, dict) else {}, "prompt": user, "reply": r.text,
-                "error": r.error}
+                "error": r.error, **r.api_fields()}
 
     def _update_model(self, result) -> Dict[str, Any]:
         """Rewrite the partner-model file from this episode (memory_mode "model")."""

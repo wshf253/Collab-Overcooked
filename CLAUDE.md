@@ -7,6 +7,9 @@
   and replaces v2's persona design, gates and pilot; where they disagree, v3 holds. v2's dates
   are not binding; v3's "report, then stop" points (after Gate 0 and after Gate 3) are. Say where
   we deviate.
+- Hosted-API egos: `docs/API_BACKEND_PLAN.md` (backend layer, cost control, smoke test) and
+  `docs/coop-setting.md`, "API backends". Keys only come from environment variables (or the
+  user's `~/.coop_api_env` on the lab server); never ask for them in chat.
 - The research code is `src/coop/` (tests in `tests/test_coop_*.py`). The original benchmark
   (`src/main.py`, `evaluation.py`) and the env defaults must keep their original behaviour.
 - Environment: Python 3.11 with `requirements-coop.txt` (`numpy<2`); run with

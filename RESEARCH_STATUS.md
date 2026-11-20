@@ -241,6 +241,22 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.27 API backends built (W1–W4 of `docs/API_BACKEND_PLAN.md`, 2026-11-20); smoke tests next
+Backend types `openai` and `anthropic` next to the local vLLM one, with a registry
+(`configs/coop/api/backends.yaml`: `astra`, `opus`), a price table, retries, a concurrency
+limit shared across processes, per-call cost, and a budget stop that resumes cleanly
+(`--max-cost`). `--ego-backend NAME` on `coop.days` and `coop.decision`, and `--partner-backend`
+on `coop.days`. Smoke test: `coop.check --api NAME`. Usage and deviations are in
+`docs/coop-setting.md`, "API backends".
+- **Tests:** 18 new ones against a local fake server, no network: payloads, response parsing,
+  retries (429 with Retry-After, 503, 529, no retry on 400 or a spend cap), the cross-process
+  limit, cost arithmetic, budget stop and resume of a `coop.days` folder, a `coop.decision`
+  stage with an API ego, the smoke report, and a scan of every written file for the key.
+- **Old configs are unchanged:** the mock equality check matched 3,037 output files, including
+  a decision-stage run.
+- **Stop point (plan W4):** the next step is SJ's smoke tests on `astra` and `opus`; W5 fixes
+  what they show, then the first-choice pilot.
+
 ### 3.26 One-decision test: the partner description changes the right action, Qwen half-follows it (`decision_urgent`, 2026-11-19)
 Fixed starts with an urgent and a long order, a scripted twin that `takes` or `keeps` on urgent
 orders, and the Qwen ego told the correct, swapped or no partner description

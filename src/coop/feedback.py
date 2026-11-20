@@ -92,7 +92,7 @@ def for_day(cfg, persona: str, run_dir: Path, day: int, run_seed: int) -> Option
     if len(words) > MAX_WORDS * 1.5:
         text = " ".join(words[:int(MAX_WORDS * 1.5)])
     out = {"day": day, "text": text.strip(), "ok": bool(text.strip()), "checks": checks(text, rules, library, kitchen),
-           "prompt": messages, "reply": r.text, "error": r.error}
+           "prompt": messages, "reply": r.text, "error": r.error, **r.api_fields()}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=1))
     return out

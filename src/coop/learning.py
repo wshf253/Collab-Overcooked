@@ -372,6 +372,10 @@ def main(argv=None):
         return
     rep = report(args.run_dir)
     print(format_report(rep))
+    from .costs import days_folder_costs
+    cost = days_folder_costs(args.run_dir)
+    if cost:
+        print("\n" + "\n".join(cost))
     if args.out:
         args.out.write_text(json.dumps(rep, indent=1, default=str))
         print(f"wrote {args.out}")

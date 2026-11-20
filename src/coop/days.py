@@ -60,7 +60,7 @@ from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from . import llm_agent  # noqa: F401  (registers the "llm" agent type)
 from .agents import Agent, make_agent
 from .env import ContinuousOrderEnv
-from .llm import build_backend
+from .llm import API_TYPES, BudgetExceeded, CostLedger, build_backend, resolve_spec
 from .orders import normalize_menu
 from .partner import PERSONAS, SimulatedHuman, Traits
 from .kitchen import Kitchen
@@ -742,6 +742,11 @@ def run_one(cfg_dict: Dict[str, Any], out: str, condition: str, persona: str, ru
                 evaluate(day)
         status = "ok"
         (run_dir / "error.log").unlink(missing_ok=True)
+    except BudgetExceeded as e:
+        # --max-cost reached: this run stops here; finished episodes stay, the interrupted one
+        # is replayed on resume (it has no summary yet).
+        status = "budget"
+        (run_dir / "budget.log").write_text(str(e) + "\n")
     except Exception:
         status = "error"
         (run_dir / "error.log").write_text(traceback.format_exc())
@@ -825,10 +830,42 @@ def code_version(layout: str, extra: Optional[List[str]] = None) -> str:
     return h.hexdigest()[:16]
 
 
+def override_backends(cfg: DaysConfig, ego: Optional[str] = None, partner: Optional[str] = None) -> DaysConfig:
+    """``--ego-backend`` / ``--partner-backend``: a registry entry replaces the backend of the
+    ego in every condition (LLM egos) or of the LLM partner. The resolved spec (with ``ref``,
+    never a key: keys stay in environment variables) is what the config records."""
+    if ego:
+        spec = resolve_spec({"ref": ego})
+        cfg.agent = dict(cfg.agent, backend=copy.deepcopy(spec))
+        for c, cond in cfg.conditions.items():
+            if cond and "backend" in cond:
+                cfg.conditions[c] = dict(cond, backend=copy.deepcopy(spec))
+    if partner:
+        if cfg.partner_type() != "llm":
+            raise ValueError("--partner-backend needs an LLM partner (partner.type llm)")
+        cfg.partner = dict(cfg.partner, backend=resolve_spec({"ref": partner}))
+    return cfg
+
+
+def api_backends(cfg: DaysConfig) -> List[Dict[str, Any]]:
+    """The hosted-API backend specs this config uses (ego conditions and partner)."""
+    specs = [cfg.condition_agent(c).get("backend") or {} for c in cfg.conditions
+             if cfg.condition_agent(c).get("type") == "llm"]
+    if cfg.partner_type() == "llm":
+        specs.append(cfg.partner.get("backend") or {})
+    return [r for r in (resolve_spec(x) for x in specs) if r.get("type") in API_TYPES]
+
+
 def run_all(cfg: DaysConfig, out: Union[str, Path], workers: int = 1, log=print,
-            allow_code_change: bool = False) -> Dict[str, Any]:
+            allow_code_change: bool = False, max_cost: Optional[float] = None) -> Dict[str, Any]:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    if api_backends(cfg) or max_cost is not None:
+        # every API call of this folder (all worker processes, all resumes) goes into one ledger
+        os.environ["COOP_COST_LEDGER"] = str((out / "cost_ledger.tsv").resolve())
+        if max_cost is not None:
+            os.environ["COOP_MAX_COST"] = str(max_cost)
+            log(f"budget: ${max_cost:.2f}; spent so far in this folder ${CostLedger.total():.2f}")
     cfg_dict = asdict(cfg)
     cfg_path = out / "config.json"
     if cfg_path.exists():
@@ -987,6 +1024,10 @@ def main(argv=None):
                     "scaled by the same factor)")
     ap.add_argument("--allow-code-change", action="store_true",
                     help="resume even though the episode-playing code changed since the run started")
+    ap.add_argument("--ego-backend", help="registry name (configs/coop/api/backends.yaml) for the ego in every condition")
+    ap.add_argument("--partner-backend", help="registry name for the LLM partner")
+    ap.add_argument("--max-cost", type=float, help="USD: stop starting API calls once this folder's ledger "
+                    "reaches it; rerun with the same --out to resume")
     args = ap.parse_args(argv)
     cfg = load_config(args.config, conditions=args.conditions, personas=args.personas,
                       run_seeds=args.run_seeds, days=args.days, episodes_per_day=args.episodes_per_day,
@@ -1000,11 +1041,18 @@ def main(argv=None):
         if cfg.regimes:
             cfg.regimes = {n: dict(r, slack=round(float(r["slack"]) * factor, 3)) if "slack" in r else r
                            for n, r in cfg.regimes.items()}
+    override_backends(cfg, args.ego_backend, args.partner_backend)
     results = run_all(cfg, args.out, args.workers, log=lambda s: print(s, file=sys.stderr, flush=True),
-                      allow_code_change=args.allow_code_change)
-    failed = [r for r in results["runs"] if r["status"] != "ok"]
+                      allow_code_change=args.allow_code_change, max_cost=args.max_cost)
+    budget = [r for r in results["runs"] if r["status"] == "budget"]
+    failed = [r for r in results["runs"] if r["status"] not in ("ok", "budget")]
     print(format_table(cfg, results["table"]))
     print(f"wrote {Path(args.out) / 'results.json'}")
+    if os.environ.get("COOP_COST_LEDGER"):
+        print(f"API cost of this folder so far: ${CostLedger.total():.2f} ({os.environ['COOP_COST_LEDGER']})")
+    if budget:
+        print(f"{len(budget)} run(s) stopped at the budget (--max-cost); rerun the same command with the same "
+              "--out (and a higher --max-cost) to resume", file=sys.stderr)
     if failed:
         print(f"{len(failed)} run(s) failed; see runs/<condition>/<persona>/seed<k>/error.log",
               file=sys.stderr)
