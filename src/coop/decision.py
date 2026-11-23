@@ -396,6 +396,21 @@ def report(cfg, out: Path) -> str:
                  f"(100 = follows it fully, 0 = ignores it); any description vs none: "
                  f"{(pu('keeps') + pu('takes')) / 2 - pu('none'):+.0f}")
 
+    # where the description is followed: per pair, by start slot and by the urgent order's limit
+    lines.append("\nDescription effect by start (first = urgent: told keeps / told takes / none)")
+    by_start = defaultdict(lambda: defaultdict(list))
+    for r in res:
+        st = r["start"]
+        pair = st["urgent"] + " / " + st["other"]
+        for key in (f"slot {st['slot']}", f"limit {st['limit']}"):
+            by_start[(pair, key)][r.get("told") or "none"].append(
+                r["first"] is not None and r["first"]["order"] == "urgent")
+    pc2 = lambda xs: f"{100 * sum(xs) / len(xs):3.0f}%" if xs else "  - "
+    for (pair, key), d in sorted(by_start.items()):
+        lines.append(f"  {pair:<52}{key:<10}{pc2(d['keeps']):>6} /{pc2(d['takes']):>5} /{pc2(d['none']):>5}"
+                     f"   effect {(100 * (sum(d['keeps']) / len(d['keeps']) - sum(d['takes']) / len(d['takes']))) if d['keeps'] and d['takes'] else float('nan'):+4.0f}"
+                     f"  (n {len(d['keeps'])})")
+
     # outcome, paired per start and partner
     lines.append("\nTeam score, paired per start (mean +- SE over starts)")
     cell = {(r["start"]["id"], r["partner"], r["description"]): r for r in res}
@@ -454,6 +469,31 @@ def report(cfg, out: Path) -> str:
     return "\n".join(lines)
 
 
+def examples(out: Path, urgent: Optional[str] = None, told: Optional[str] = None, n: int = 6) -> str:
+    """The first decision of LLM episodes: what the ego was told, its reply (partner read and
+    action) and which order that action served."""
+    lines = []
+    for f in sorted((Path(out) / "llm").glob("*/*/*/result.json")):
+        r = json.loads(f.read_text())
+        if urgent and r["start"]["urgent"] != urgent:
+            continue
+        if told and (r.get("told") or "none") != told:
+            continue
+        log = json.loads((f.parent / "agent_log.json").read_text())
+        first = next((c for c in log.get("calls", []) if c.get("kind") == "decide"), None)
+        st = r["start"]
+        lines.append(f"--- {st['id']}  partner {r['partner']}  told {r.get('told') or 'none'}  -> first: "
+                     f"{(r['first'] or {}).get('action')} ({(r['first'] or {}).get('order')})")
+        if first:
+            obs = first["user"]
+            orders = [ln for ln in obs.splitlines() if "rder" in ln][:3]
+            lines += ["  " + ln.strip() for ln in orders]
+            lines.append("  reply: " + (first.get("response") or "").replace("\n", " ")[:600])
+        if len([x for x in lines if x.startswith("---")]) >= n:
+            break
+    return "\n".join(lines) or "no matching episodes"
+
+
 def dishes_table(folder) -> str:
     """Per dish in a runner folder: orders, ego / partner deliveries, expiries, ego wrong deliveries."""
     acc: Dict[Tuple[str, str], Dict[str, Any]] = defaultdict(lambda: {"orders": 0, "ego": 0, "partner": 0,
@@ -491,7 +531,10 @@ def dishes_table(folder) -> str:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("config")
-    ap.add_argument("--stage", choices=("dishes", "screen", "llm", "report"), required=True)
+    ap.add_argument("--stage", choices=("dishes", "screen", "llm", "report", "examples"), required=True)
+    ap.add_argument("--pair", help="--stage examples: only this urgent dish")
+    ap.add_argument("--told", choices=("keeps", "takes", "none"), help="--stage examples: only this description")
+    ap.add_argument("-n", type=int, default=6, help="--stage examples: how many episodes")
     ap.add_argument("--out")
     ap.add_argument("--from-folder", help="--stage dishes: a finished coop.days folder")
     ap.add_argument("--workers", type=int, default=1)
@@ -535,6 +578,9 @@ def main(argv=None):
         if shared:
             raise SystemExit(f"pair {u}:{o} shares {sorted(shared)}: pick dishes with disjoint ingredients "
                              "so the first action shows which order the ego chose")
+    if args.stage == "examples":
+        print(examples(out, args.pair, args.told, args.n))
+        return
     if args.stage == "screen":
         screen(cfg, out)
     elif args.stage == "llm":

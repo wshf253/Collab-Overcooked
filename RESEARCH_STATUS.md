@@ -241,6 +241,40 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.28 Decision test by pair; recipe-guard learning run (`decision_urgent`, `days_ctx_guard`, 2026-11-23)
+**Decision test, first choice by pair** (first move on the urgent order: told `keeps` /
+told `takes` / no description):
+- `boiled_potato_slices` urgent / `baked_carrot_soup` other (22 runs per description):
+  95% / 0% / 0%. Qwen follows the description fully (effect +95 points).
+- `boiled_carrot_slices` urgent / `baked_potato_soup` other (54): 41% / 52% / 0%. It does not
+  follow it (effect −11).
+- With no description it always starts on the older order, in both pairs.
+
+So the pooled +20 hides one pair where Qwen uses the description perfectly and one where it
+does not. The start-by-start breakdown and the `examples` stage (Qwen's first replies) were
+added to look for the cause.
+
+**Dishes, held-out episodes added:** the ego delivers `boiled_carrot_slices` itself in 53% of
+its orders (27 of 374 expired), the best ego share of any dish. The commonest ego mistake by
+far is boiling a whole potato (`boiled_potato`, on no menu): 884 wrong deliveries.
+
+**Recipe-guard run** (`days_ctx_guard`; `tom_struct`, `memory_fb`, `oracle`; 2 cards × 4 seeds):
+- **Cooking competence improved:** held-out orders completed 93–100% (pilot 81–89%), orders
+  expired 0.6–0.8 per episode (pilot 1.4–1.7), ego invalid replies 1.3–1.6 per episode.
+- **Held-out score vs `tom_struct`:** `memory_fb` +6.8 ± 14.3 (A +27.5, B −14.0), `oracle`
+  +13.8 ± 15.0. Neither is significant.
+- **Interaction episodes:** `oracle` −16.8 ± 8.2 vs `tom_struct`, worst on days 3–5;
+  `memory_fb` −3.5 ± 4.6.
+- **The card's wants lines are not used:** held-out alignment `oracle` − `tom_struct` −0.3 ± 3.9
+  (in the pilot +7.6).
+- Probe 44–53% (chance 33%); urgent / blocked contexts are still rare (on_urgent keeps 12.7
+  opportunities over 5 days).
+- **Reading:** removing recipe mistakes makes the ego finish its orders, but in the full game
+  Qwen does not act on the partner's card (no alignment gain even when told it). In the
+  decision test it acts on it only at a clean decision at step 0, and only in one pair.
+  The card A+ / B− split of memory repeats the pilot, where the swap control showed it is
+  not partner-specific.
+
 ### 3.27 API backends built (W1–W4 of `docs/API_BACKEND_PLAN.md`, 2026-11-20); smoke tests next
 Backend types `openai` and `anthropic` next to the local vLLM one, with a registry
 (`configs/coop/api/backends.yaml`: `astra`, `opus`), a price table, retries, a concurrency
