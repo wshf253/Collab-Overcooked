@@ -647,9 +647,11 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------- #
 def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules, ego_player,
                       view_radius=None, open_orders: int = 1, ego_index: int = 0,
-                      deadlines=None, order_mode: str = "random") -> Dict[str, Any]:
+                      deadlines=None, order_mode: str = "random", partner_player=None) -> Dict[str, Any]:
     """One episode: ``ego_player`` (a SimulatedHuman or RulePlayer in ego mode) with the
-    rule-based twin of ``partner_rules``; returns the score and the rule summary."""
+    rule-based twin of ``partner_rules``; returns the score and the rule summary.
+    ``partner_player``: a ready twin to use instead (plan v4 cards: ContextPlayer with
+    ``near_cooking`` and the latent labels)."""
     import contextlib
     import io
     from .env import ContinuousOrderEnv
@@ -663,7 +665,9 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
         start = env.reset(seed)
     other = 1 - ego_index
     from .rules import CONTEXT_RULE_IDS
-    if any(r.id in CONTEXT_RULE_IDS for r in partner_rules):
+    if partner_player is not None:
+        partner = partner_player
+    elif any(r.id in CONTEXT_RULE_IDS for r in partner_rules):
         from .context_partner import ContextPlayer
         partner = ContextPlayer(partner_rules, list(menu), "partner", "card", name="twin")
     else:
@@ -672,7 +676,7 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
     partner.reset(env.mdp, other, seed, view_radius=view_radius)
     k = Kitchen(env.mdp, ego_index, start)
     ev = RuleEvaluator(partner_rules, load_library(), k, list(menu), ego_index, other, open_orders, env.mdp,
-                       view_radius=view_radius)
+                       view_radius=view_radius, style=getattr(partner, "latent", None) is not None)
     while not env.done:
         t, pre = env.t, env.state
         moves = [None, None]
@@ -687,4 +691,4 @@ def play_rule_episode(menu, layout: str, horizon: int, seed: int, partner_rules,
     s = env.summary()
     return {"score": s["score"], "rules": ev.summary(), "steps": env.t, "orders_completed": s["orders_completed"],
             "orders_expired": s.get("orders_expired", 0), "guards": len(getattr(partner, "guards", [])),
-            "judgments": ev.judgments}
+            "judgments": ev.judgments, "partner_decisions": list(getattr(partner, "decision_log", []))}

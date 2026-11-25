@@ -371,7 +371,8 @@ def play_episode(cfg: DaysConfig, agent: Agent, persona: str, run_seed: int, day
     evaluator = None
     if rules is not None:
         evaluator = RuleEvaluator(rules, load_library(), Kitchen(env.mdp, ego, start), normalize_menu(menu),
-                                  ego, other, cfg.open_orders, env.mdp, view_radius=cfg.view_radius)
+                                  ego, other, cfg.open_orders, env.mdp, view_radius=cfg.view_radius,
+                                  style=cfg.cards()[persona].latent is not None)
     agent.begin_episode(env.mdp, ego, context)
     ep_dir.mkdir(parents=True, exist_ok=True)
     with open(ep_dir / "steps.jsonl", "w") as steps:
@@ -468,7 +469,8 @@ def make_partner(cfg: DaysConfig, persona: str, context: Dict[str, Any]):
     if ptype == "rule":
         if any(r.id in CONTEXT_RULE_IDS for r in rules):
             from .context_partner import ContextPlayer
-            return ContextPlayer(rules, list(normalize_menu(cfg.menu)), "partner", "card", name=persona), rules, None
+            return ContextPlayer(rules, list(normalize_menu(cfg.menu)), "partner", "card", name=persona,
+                                 near_cooking=card.latent is not None, latent=card.latent), rules, None
         return RulePlayer(rules, normalize_menu(cfg.menu), "partner", persona), rules, None
     p = cfg.partner
     agent = LLMPartner(p["backend"], card, load_library(), complexity=k, remind=p.get("remind", True),

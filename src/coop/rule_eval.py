@@ -907,12 +907,12 @@ CHECKS = {"own_station": OwnStation, "solo_dish": SoloDish, "split_dish": SplitD
           "waits_for_commit": WaitsForCommit}
 
 
-def make_checks(rules: List[Rule], library, kitchen) -> List[Check]:
+def make_checks(rules: List[Rule], library, kitchen, style: bool = False) -> List[Check]:
     from .context_eval import ContextRules
     from .rules import CONTEXT_RULE_IDS
     out: List[Check] = [CHECKS[r.id](r, library, kitchen) for r in rules if r.id not in CONTEXT_RULE_IDS]
     if any(r.id in CONTEXT_RULE_IDS for r in rules):
-        out.append(ContextRules(rules, library, kitchen))     # one checker: card order decides
+        out.append(ContextRules(rules, library, kitchen, style=style))     # one checker: card order decides
     return out
 
 
@@ -923,11 +923,11 @@ class RuleEvaluator:
     """Adherence (partner) and alignment (ego) per rule over one episode, on the full state."""
 
     def __init__(self, rules: List[Rule], library, kitchen, menu, ego: int, partner: int, n_open: int, mdp,
-                 view_radius: Optional[int] = None):
+                 view_radius: Optional[int] = None, style: bool = False):
         self.rules = rules
         self.ego, self.partner, self.view_radius = ego, partner, view_radius
         self.tracker = Tracker(kitchen, menu, {ego: "ego", partner: "partner"}, n_open)
-        self.checks = make_checks(rules, library, kitchen)
+        self.checks = make_checks(rules, library, kitchen, style=style)
         self.jobs = {"partner": JobView(mdp, partner), "ego": JobView(mdp, ego)}
         self.judgments: List[Judgment] = []
         # Context rules (plan v3): each player's view and context history, so a choice is

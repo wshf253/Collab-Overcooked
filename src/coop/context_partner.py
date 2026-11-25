@@ -22,6 +22,7 @@ How the modes act on jobs (a job is one step of the base player's plan):
 |---|---|---|
 | default_work prep | only prep jobs: fetch raw ingredients, cut / blend; raw items for pots and ovens are put on a counter | no prep jobs: take items from counters and utensils, cook, plate, deliver |
 | default_work whole | only jobs of its order (oldest open order the other is not on), kept until served | only jobs of its own order: the newest open order the partner is not on |
+| default_work station (plan v4) | only station jobs: load a pot or oven with an item that was brought (held, or on a counter or in a cooking utensil, never from a dispenser or board), start it, take food out, plate (``station_plates``); plated food it puts on a counter; idles in the cooking area | no station jobs: fetch, cut, bring cooking items to a counter by the cooking area, serve |
 | on_urgent takes | only jobs of the urgent order (unless_ego_on_it=yes: not if the other is on it) | no jobs of the urgent order (unless it is already on it) |
 | on_urgent keeps | as default | only jobs of the urgent order |
 | on_blocked clears | only jobs that take finished food out of the blocked kind | no such jobs |
@@ -37,6 +38,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from .context import ContextTracker, on_order, open_dishes, tree
+from .nav import Action, facing, step_aside, step_towards
 from .partner import Job
 from .rule_partner import RulePlayer
 from .rules import CONTEXT_RULE_IDS, Rule
@@ -47,10 +49,29 @@ GUARD_STEPS = 30
 EGO_POLICIES = ("proactive", "steady", "always_take_urgent", "never_take_urgent", "wait_and_see")
 
 
+STATION_PLATES = True     # plan v4, open point 12: the station cook plates (and the ego serves)
+
+
+def cooking_area(floor, kind_at, cells, plates: bool = STATION_PLATES) -> set:
+    """Walkable cells next to a pot or oven, plus next to the dish dispenser if the station
+    cook plates (plan v4, 2.1): one rule for every layout."""
+    anchors = [p for p, k in kind_at.items() if k in COOK_KINDS] + (list(cells.get("D", [])) if plates else [])
+    out = set()
+    for (x, y) in anchors:
+        for q in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if q in floor:
+                out.add(q)
+    return out
+
+
 class ContextPlayer(RulePlayer):
     def __init__(self, rules: List[Rule], menu: List[str], mode: str = "partner", policy: str = "card",
-                 k: int = 0, guard_steps: int = GUARD_STEPS, name: str = "context"):
+                 k: int = 0, guard_steps: int = GUARD_STEPS, name: str = "context",
+                 near_cooking: bool = False, latent: Optional[Dict[str, Any]] = None):
         super().__init__(rules, menu, mode, name)
+        # plan v4: hand cooking items over on counters by the cooking area (v3 cards: nearest
+        # counter, unchanged); latent labels of the card, logged with every decision
+        self.near_cooking, self.latent = bool(near_cooking), latent
         if mode == "partner" and policy != "card":
             raise ValueError("the partner plays its card (policy 'card')")
         if mode == "ego" and policy not in EGO_POLICIES:
@@ -71,8 +92,11 @@ class ContextPlayer(RulePlayer):
         self.waiting: Dict[str, Any] = {}          # wait_and_see: event being watched, until
         self.seen: Dict[Tuple, bool] = {}          # wait_and_see: what it decided per context
         self.decision_log: List[Dict[str, Any]] = []
+        self._true_pos: Optional[Tuple] = None
+        self._area: Optional[set] = None
 
     def act(self, state, t: int):
+        self._true_pos = (tuple(state.players[0].position), tuple(state.players[1].position))
         # The guard is a runner mechanism: it looks at the true state, not the player's view.
         if any(state.ml_actions or []):
             self.last_progress = t
@@ -143,6 +167,35 @@ class ContextPlayer(RulePlayer):
             return self.kind_at[job.pos] in PREP_KINDS
         return False
 
+    def _workflow(self) -> Optional[str]:
+        r = next((r for r in self.ctx_rules if r.id == "default_work"), None)
+        return r.p["mode"] if r is not None else None
+
+    def cooking_area(self) -> set:
+        if self._area is None:
+            self._area = cooking_area(self.floor, self.kind_at, self.cells)
+        return self._area
+
+    def _is_station(self, job: Job) -> bool:
+        """A station cook's job (plan v4): load a pot or oven with an item that was brought to
+        it, start it, take food out, plate. Fetching, cutting and serving are not."""
+        if job.kind == "bring":
+            if job.dest is None:                   # taking finished food out of a pot / oven (not serving it)
+                return job.pos is not None and self.kind_at.get(job.pos) in COOK_KINDS
+            if self._dest_kind(job) not in COOK_KINDS:
+                return False
+            if job.pos is None:                    # held, or to be fetched from a dispenser
+                held = self.me.held_object is not None and self.me.held_object.name == job.item
+                return held and self.mode == "partner"   # it loads what it holds; it never fetches
+            if self.terrain[job.pos[1]][job.pos[0]] == "X":
+                return True                        # brought to a counter
+            return self.kind_at.get(job.pos) in COOK_KINDS     # oven -> pot
+        if job.kind in ("start", "unload", "clear"):
+            return job.pos in self.kind_at and self.kind_at[job.pos] in COOK_KINDS
+        if job.kind in ("plate", "supply_dish"):
+            return STATION_PLATES
+        return False
+
     def _clears(self, job: Job, kinds: List[str], others_only: bool = False) -> bool:
         """Taking finished food out of a utensil of a blocked kind (``others_only``: not from
         its own batch; finishing its own order is not clearing)."""
@@ -165,10 +218,39 @@ class ContextPlayer(RulePlayer):
 
     # -- the policy ------------------------------------------------------------
     def _no_cook(self) -> bool:
-        """The prep partner does not load pots or ovens (it puts their raw items on a counter)."""
-        return (self.mode == "partner" and self.policy == "card" and not self.guard_active
-                and any(r.id == "default_work" and r.p["mode"] == "prep" for r in self.ctx_rules)
-                and getattr(self, "_regime", "default") == "default")
+        """The prep partner does not load pots or ovens (it puts their raw items on a counter);
+        nor does the ego that complements a station cook (plan v4)."""
+        if getattr(self, "_regime", "default") != "default":
+            return False
+        if self.mode == "partner":
+            return (self.policy == "card" and not self.guard_active
+                    and any(r.id == "default_work" and r.p["mode"] == "prep" for r in self.ctx_rules))
+        return self.policy == "proactive" and self._workflow() == "station"
+
+    def _handoff(self):
+        if not self.near_cooking:
+            return super()._handoff()
+        area = self.cooking_area()
+        near = [p for p in self._free_counters(shared=True) + self._free_counters(shared=False)
+                if any((p[0] + dx, p[1] + dy) in area for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))]
+        return self._go(near) if near else super()._handoff()
+
+    def _explore(self):
+        """Partial view, nothing known to do: the station cook only goes to look at the cooking
+        stations (and the dish dispenser), so it stays around the cooking area."""
+        if not (self.mode == "partner" and self._workflow() == "station" and not self.guard_active):
+            return super()._explore()
+        stations = [p for p, k in self.kind_at.items() if k in COOK_KINDS and self._mine(p)] + \
+            ([p for p in self.cells.get("D", []) if self._mine(p)] if STATION_PLATES else [])
+        if self.explore_target is None or self.state.visible(self.explore_target) or self.explore_target not in stations:
+            unseen = [p for p in stations if not self.state.visible(p)]
+            if not unseen:
+                self.explore_target = None
+                return step_aside(self.floor, self.access, tuple(self.me.position), tuple(self.other.position))
+            self.explore_target = min(unseen, key=lambda p: (self.state.last_seen(p) is not None,
+                                                             self.state.last_seen(p) or 0))
+        act = step_towards(self.floor, self.me.position, self.me.orientation, self.other.position, [self.explore_target])
+        return Action.STAY if act == Action.INTERACT else act
 
     def _can_place(self, dest):
         if dest in self.recipes and self.recipes[dest][0] in COOK_KINDS and self._no_cook():
@@ -193,6 +275,8 @@ class ContextPlayer(RulePlayer):
             return jobs
         if rule.p["mode"] == "prep":
             return [j for j in jobs if self._is_prep(j) != ego]
+        if rule.p["mode"] == "station":
+            return [j for j in jobs if self._is_station(j) != ego]
         own = self._pick_commit(ctx, newest=ego)
         return [j for j in jobs if own is not None and self._serves(j, own) and not self._theirs_item(j)]
 
@@ -268,7 +352,15 @@ class ContextPlayer(RulePlayer):
         return jobs, "none"
 
     def _jobs(self):
-        jobs = super()._jobs()
+        if self.latent is not None and self.mode == "partner":
+            # plan v4 cards: list every job (cooking ones too) before the rules choose; the "do
+            # not cook" setting of the previous step must not hide the jobs a context rule may
+            # switch to (the v3 twin keeps its old behaviour: it missed some of them)
+            prev, self._regime = getattr(self, "_regime", "default"), "listing"
+            jobs = super()._jobs()
+            self._regime = prev
+        else:
+            jobs = super()._jobs()
         if self.rt is None or not self.state.order_list:
             return jobs
         ctx = self._context()
@@ -291,11 +383,26 @@ class ContextPlayer(RulePlayer):
         job, why = super()._choose(jobs, t)
         if job is not None and job is not getattr(self, "_logged_job", None):
             rule, ctx = getattr(self, "_last_ctx", ("none", {}))
-            self.decision_log.append({"t": t, "rule": rule, "job": job.describe(),
-                                      "urgent": ctx.get("urgent"), "blocked": ctx.get("blocked"),
-                                      "prep_ready": ctx.get("prep_ready")})
+            row = {"t": t, "rule": rule, "job": job.describe(),
+                   "urgent": ctx.get("urgent"), "blocked": ctx.get("blocked"),
+                   "prep_ready": ctx.get("prep_ready")}
+            if self.latent is not None:            # plan v4 cards: labels, mode, seen by the other
+                r = next((x for x in self.ctx_rules if x.label().startswith(rule + "(") or x.id == rule), None)
+                row.update(latent=self.latent, mode=r.p.get("mode") if r is not None else None,
+                           in_other_view=self._in_other_view())
+            self.decision_log.append(row)
             self._logged_job = job
         return job, why
+
+    def _in_other_view(self) -> Optional[bool]:
+        """Was this player inside the other player's view (true positions, the same radius)?"""
+        if self._true_pos is None:
+            return None
+        radius = self.belief.radius if self.belief is not None else None
+        if radius is None:
+            return True
+        me, other = self._true_pos[self.index], self._true_pos[1 - self.index]
+        return max(abs(me[0] - other[0]), abs(me[1] - other[1])) <= radius
 
     def summary(self) -> Dict[str, Any]:
         out = super().summary()

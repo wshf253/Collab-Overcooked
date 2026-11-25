@@ -119,13 +119,17 @@ waits_for_commit:
 # are filled with the current instance.
 default_work:
   category: context
-  params: {mode: [prep, whole]}
+  params: {mode: [prep, whole, station]}
   text_prep: "Your job is preparation: you fetch ingredients and cut or blend them for the open orders. You do not cook (pots and ovens) and you do not plate or serve. A raw ingredient that goes straight into a pot or oven you put on a counter for your partner."
   wants_prep: "Cook and serve what I prepare: take my prepared items and the raw ingredients I put on the counters into the pots and ovens, then plate and deliver."
   reminder_prep: "You prepare; cooking, plating and serving are your partner's part."
   text_whole: "You take one order and do it yourself from start to finish: every ingredient, every step, the plating and the delivery. You take the oldest open order your partner is not working on and stay with it until it is served. You do not work on the other order."
   wants_whole: "Take the other open order and do it from start to finish; I do mine."
   reminder_whole: "Stay with your own order ({order}) until it is served."
+  # station (plan v4, 2.1): the cooking-station cook; plates, does not serve (open point 12)
+  text_station: "You work at the cooking stations: you load the pots and ovens, start them, take the food out and plate it. You do not fetch raw ingredients, you do not cut or blend, and you do not serve: your partner brings you what to cook and serves what you plate."
+  wants_station: "Bring me the ingredients, prepared, and serve what I plate: I stay at the pots and ovens."
+  reminder_station: "You stay at the pots and ovens: load, cook and plate what is brought to you; you do not fetch, prepare or serve."
 
 on_urgent:
   category: context

@@ -7,6 +7,9 @@
   and replaces v2's persona design, gates and pilot; where they disagree, v3 holds. v2's dates
   are not binding; v3's "report, then stop" points (after Gate 0 and after Gate 3) are. Say where
   we deviate.
+- Plan v4, `docs/STYLE_PARTNER_PLAN_v4.md` (two-axis partners: workflow x plan adherence;
+  validation V0-V2 without API models), replaces v3's cards, gates and order of work; the rest
+  of v3 still holds. Where they disagree, v4 holds. Its stops (after V0 and after V2) are binding.
 - Hosted-API egos: `docs/API_BACKEND_PLAN.md` (backend layer, cost control, smoke test) and
   `docs/coop-setting.md`, "API backends". Keys only come from environment variables (or the
   user's `~/.coop_api_env` on the lab server); never ask for them in chat.

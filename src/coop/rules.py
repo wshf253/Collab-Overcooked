@@ -74,13 +74,21 @@ class Card:
     name: str
     backstory: str = ""
     rules: List[Rule] = field(default_factory=list)
+    # Two-axis cards (docs/STYLE_PARTNER_PLAN_v4.md, 2): latent labels {workflow, adherence},
+    # per context {mode, adherence, identifiable}, and the backstory variants. None for rule cards.
+    latent: Optional[Dict[str, Any]] = None
+    contexts: Optional[Dict[str, Dict[str, Any]]] = None
+    backstories: Optional[Dict[str, str]] = None
 
     def active(self, complexity: Optional[int] = None) -> List[Rule]:
         return list(self.rules if complexity is None else self.rules[:complexity])
 
     def to_dict(self, complexity: Optional[int] = None) -> Dict[str, Any]:
-        return {"name": self.name, "backstory": self.backstory, "complexity": complexity,
-                "rules": [r.to_dict() for r in self.active(complexity)]}
+        out = {"name": self.name, "backstory": self.backstory, "complexity": complexity,
+               "rules": [r.to_dict() for r in self.active(complexity)]}
+        if self.latent is not None:          # two-axis cards only: rule cards keep their shape
+            out.update(latent=self.latent, contexts=self.contexts, backstories=self.backstories)
+        return out
 
 
 NEUTRAL = "neutral"
@@ -144,6 +152,94 @@ def check_rules(rules: List[Rule]) -> List[str]:
     return errors
 
 
+# ---------------------------------------------------------------------- #
+# Two-axis cards (docs/STYLE_PARTNER_PLAN_v4.md, 2): workflow x plan adherence
+# ---------------------------------------------------------------------- #
+WORKFLOWS = ("prep", "whole", "station")
+ADHERENCE = ("rigid", "flexible")
+STYLE_CONTEXTS = ("on_urgent", "on_blocked", "on_prep_ready")
+ADHERENCE_MODES = {
+    "rigid": {"on_urgent": {"mode": "keeps"}, "on_blocked": {"mode": "waits"}, "on_prep_ready": {"mode": "continues"}},
+    "flexible": {"on_urgent": {"mode": "takes", "unless_ego_on_it": "yes"}, "on_blocked": {"mode": "clears"},
+                 "on_prep_ready": {"mode": "switches"}},
+}
+# (workflow, context) pairs where the workflow fixes the response whatever the adherence, so the
+# adherence is not identifiable there: the station cook clears pots and ovens and cooks prepared
+# items as its own work. Those context rules are left out of the card (the workflow governs) and
+# the pair is marked not_identifiable.
+FIXED_BY_WORKFLOW = {("station", "on_blocked"): "clears and cooks as its own work",
+                     ("station", "on_prep_ready"): "cooks prepared items as its own work"}
+BACKSTORY_VARIANTS = ("style_only", "style_habits")
+
+
+def expand_style(name: str, spec: Dict[str, Any], library: Dict[str, Dict[str, Any]]) -> Card:
+    """A two-axis card -> its context rules, latent labels and per-context truth. Raises on
+    contradictions (unknown values, an explicit adherence the workflow overrides, both forms)."""
+    if "rules" in spec:
+        raise ValueError(f"card {name}: give either rules or workflow/adherence, not both")
+    wf, adh = spec.get("workflow"), spec.get("adherence")
+    if wf not in WORKFLOWS:
+        raise ValueError(f"card {name}: workflow must be one of {WORKFLOWS}, got {wf!r}")
+    if isinstance(adh, str):
+        if adh not in ADHERENCE:
+            raise ValueError(f"card {name}: adherence must be one of {ADHERENCE} or a per-context map")
+        per = {c: adh for c in STYLE_CONTEXTS}
+    elif isinstance(adh, dict):
+        if set(adh) != set(STYLE_CONTEXTS):
+            raise ValueError(f"card {name}: a per-context adherence names exactly {STYLE_CONTEXTS}, got {sorted(adh)}")
+        bad = {c: v for c, v in adh.items() if v not in ADHERENCE}
+        if bad:
+            raise ValueError(f"card {name}: adherence values must be {ADHERENCE}, got {bad}")
+        fixed = [c for c in STYLE_CONTEXTS if (wf, c) in FIXED_BY_WORKFLOW]
+        if fixed:
+            raise ValueError(f"card {name}: the {wf} workflow fixes {fixed}; give one adherence value, not a map")
+        per = dict(adh)
+    else:
+        raise ValueError(f"card {name}: adherence is missing")
+    rules = [parse_rule({"default_work": {"mode": wf}}, library)]
+    contexts: Dict[str, Dict[str, Any]] = {}
+    for c in STYLE_CONTEXTS:
+        if (wf, c) in FIXED_BY_WORKFLOW:
+            contexts[c] = {"mode": None, "adherence": None, "identifiable": False,
+                           "note": FIXED_BY_WORKFLOW[(wf, c)]}
+            continue
+        mode = ADHERENCE_MODES[per[c]][c]
+        rules.append(parse_rule({c: dict(mode)}, library))
+        contexts[c] = {"mode": mode["mode"], "adherence": per[c], "identifiable": True}
+    errors = check_rules(rules)
+    if errors:
+        raise ValueError(f"card {name}: " + "; ".join(errors))
+    stories = spec.get("backstory") or {}
+    if isinstance(stories, str):
+        stories = {"style_only": stories}
+    unknown = set(stories) - set(BACKSTORY_VARIANTS)
+    if unknown:
+        raise ValueError(f"card {name}: backstory variants are {BACKSTORY_VARIANTS}, got {sorted(unknown)}")
+    stories = {k: str(v).strip() for k, v in stories.items()}
+    latent = {"workflow": wf, "adherence": adh if isinstance(adh, str) else dict(adh)}
+    return Card(name, stories.get("style_only", ""), rules, latent=latent, contexts=contexts, backstories=stories)
+
+
+def flip_adherence(card: Card, contexts: Optional[List[str]] = None, workflow: Optional[str] = None,
+                   library: Optional[Dict[str, Dict[str, Any]]] = None) -> Card:
+    """The same card with the adherence flipped in ``contexts`` (all identifiable ones by
+    default) and optionally another ``workflow``: the cards that wrong-belief egos act on."""
+    if card.latent is None:
+        raise ValueError("flip_adherence needs a two-axis card")
+    library = library or load_library()
+    adh = card.latent["adherence"]
+    per = {c: adh for c in STYLE_CONTEXTS} if isinstance(adh, str) else dict(adh)
+    flip = {"rigid": "flexible", "flexible": "rigid"}
+    for c in (contexts if contexts is not None else STYLE_CONTEXTS):
+        per[c] = flip[per[c]]
+    wf = workflow or card.latent["workflow"]
+    keep = {c: v for c, v in per.items() if (wf, c) not in FIXED_BY_WORKFLOW}
+    vals = set(keep.values())
+    adh_new: Any = vals.pop() if len(vals) == 1 else {c: per[c] for c in STYLE_CONTEXTS}
+    return expand_style(f"{card.name}~{wf}/{adh_new if isinstance(adh_new, str) else 'mixed'}",
+                        {"workflow": wf, "adherence": adh_new}, library)
+
+
 def load_cards(path: Path, library: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Card]:
     library = library or load_library()
     raw = _yaml(path) or {}
@@ -151,6 +247,9 @@ def load_cards(path: Path, library: Optional[Dict[str, Dict[str, Any]]] = None) 
     for name, spec in raw.items():
         if name == NEUTRAL:
             raise ValueError(f"'{NEUTRAL}' is built in (a card with no rules)")
+        if "workflow" in spec or "adherence" in spec:
+            cards[name] = expand_style(name, spec, library)
+            continue
         rules = [parse_rule(e, library) for e in (spec.get("rules") or [])]
         errors = check_rules(rules)
         if errors:

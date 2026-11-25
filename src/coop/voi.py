@@ -24,7 +24,7 @@ import json
 import statistics
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .partner import DEFAULT_PERSONAS, ORDER_PERSONAS, PERSONAS, Traits
 from .screen import DEFAULT_MENU, simulate
@@ -358,6 +358,170 @@ def gate0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calib
     return out
 
 
+# ---------------------------------------------------------------------- #
+# Plan v4 V0 (docs/STYLE_PARTNER_PLAN_v4.md, 5): two-axis cards x scripted egos, twin partner
+# ---------------------------------------------------------------------- #
+def style_egos(card) -> List[str]:
+    """The egos played against one two-axis card (plan v4, 4): informed, partly informed
+    (wrong adherence, wrong workflow, one context flipped) and reactive."""
+    from .rules import WORKFLOWS
+    ident = [c for c, v in card.contexts.items() if v["identifiable"]]
+    out = ["best_response", "wrong_adherence"]
+    out += [f"wrong_workflow:{wf}" for wf in WORKFLOWS if wf != card.latent["workflow"]]
+    if len(ident) > 1:
+        out += [f"flip:{c}" for c in ident]
+    return out + list(REACTIVE)
+
+
+def _style_ego(name: str, card, menu):
+    from .context_partner import ContextPlayer
+    from .rules import flip_adherence
+    if name == "best_response":
+        target = card
+    elif name == "wrong_adherence":
+        target = flip_adherence(card)
+    elif name.startswith("wrong_workflow:"):
+        target = flip_adherence(card, contexts=[], workflow=name.split(":", 1)[1])
+    elif name.startswith("flip:"):
+        target = flip_adherence(card, contexts=[name.split(":", 1)[1]])
+    else:
+        return _ctx_ego(name, {}, None, menu)
+    return ContextPlayer(target.rules, menu, "ego", "proactive", name=name, near_cooking=True)
+
+
+def _style_job(arg):
+    from .context_partner import ContextPlayer
+    from .partner import SimulatedHuman
+    from .persona_check import play_rule_episode
+    from .rules import load_cards
+    card_path, card, ego, seed, ep, menu, layout, horizon, view_radius, open_orders, deadlines = arg
+    eseed = seed * 1000 + ep
+    if card is None:                            # reference: a steady pair on the same episode
+        from .deadlines import play_pair
+        s = play_pair(list(menu), layout, eseed, horizon, open_orders, view_radius, deadlines)
+        return {"score": s["score"]}
+    c = load_cards(card_path)[card]
+    twin = ContextPlayer(c.rules, list(menu), "partner", "card", name=card, near_cooking=True, latent=c.latent)
+    player = _style_ego(ego, c, list(menu))
+    r = play_rule_episode(list(menu), layout, horizon, eseed, c.rules, player, view_radius, open_orders,
+                          deadlines=deadlines, order_mode="controlled", partner_player=twin)
+    adh = sum(row["partner"]["adherent"] for row in r["rules"].values())
+    opp = sum(row["partner"]["opportunities"] for row in r["rules"].values())
+    return {"score": r["score"], "completed": r["orders_completed"], "expired": r["orders_expired"],
+            "guards": r["guards"], "adherent": adh, "opportunities": opp}
+
+
+def v0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calibrate: List[int], judge: List[int],
+       episodes: int = 3, horizon: int = 300, view_radius=2, open_orders: int = 2, workers: int = 1,
+       guard_factor: float = 2.0, main: Optional[List[str]] = None) -> Dict:
+    """Plan v4 V0: does each axis have value? Crossover of egos x cards (score minus a steady
+    pair on the same episode, expired orders, guard firings) and, per card, paired intervals over
+    the judge seeds of best_response minus the best reactive ego (chosen on the calibration
+    seeds), minus wrong_adherence, minus each wrong_workflow, and minus each one-context flip."""
+    from multiprocessing import Pool
+    from .rules import load_cards
+    cards = {n: c for n, c in load_cards(cards_path).items() if c.latent is not None}
+    main = main or [n for n in cards if n != "mixed"]
+    egos = {n: style_egos(c) for n, c in cards.items()}
+    seeds = list(calibrate) + list(judge)
+    eps = range(episodes)
+    jobs = [(str(cards_path), n, e, s, k, list(menu), layout, horizon, view_radius, open_orders, deadlines)
+            for n in cards for e in egos[n] for s in seeds for k in eps]
+    jobs += [(None, None, "reference", s, k, list(menu), layout, horizon, view_radius, open_orders, deadlines)
+             for s in seeds for k in eps]
+    if workers > 1:
+        with Pool(workers) as pool:
+            res = pool.map(_style_job, jobs, chunksize=4)
+    else:
+        res = [_style_job(j) for j in jobs]
+    got = {(j[1], j[2], j[3], j[4]): r for j, r in zip(jobs, res)}
+    ref = {s: statistics.fmean(got[(None, "reference", s, k)]["score"] for k in eps) for s in seeds}
+
+    def per_seed(c, e, s, key="score"):
+        return statistics.fmean(got[(c, e, s, k)][key] for k in eps)
+
+    def mean(c, e, ss, key="score"):
+        return statistics.fmean(per_seed(c, e, s, key) for s in ss)
+
+    def delta(c, a, b):
+        return paired_ci([per_seed(c, a, s) - per_seed(c, b, s) for s in judge])
+
+    out: Dict[str, Any] = {"cards": list(cards), "main": main, "egos": egos, "calibrate": list(calibrate),
+                           "judge": list(judge), "episodes": episodes, "deadlines": deadlines,
+                           "view_radius": view_radius, "layout": layout, "menu": list(menu), "horizon": horizon,
+                           "reference_judge": statistics.fmean(ref[s] for s in judge), "table": {}, "cards_result": {}}
+    for c, card in cards.items():
+        for e in egos[c]:
+            out["table"][f"{c}|{e}"] = {"vs_ref": statistics.fmean(per_seed(c, e, s) - ref[s] for s in judge),
+                                        "score": mean(c, e, judge), "expired": mean(c, e, judge, "expired"),
+                                        "guards": mean(c, e, judge, "guards")}
+        best = max(REACTIVE, key=lambda e: mean(c, e, calibrate))
+        bar = max(0.5, guard_factor * mean(c, "best_response", calibrate, "guards"))
+        adh = sum(got[(c, "best_response", s, k)]["adherent"] for s in seeds for k in eps)
+        opp = sum(got[(c, "best_response", s, k)]["opportunities"] for s in seeds for k in eps)
+        r = {"workflow": card.latent["workflow"], "adherence": card.latent["adherence"],
+             "not_identifiable": [x for x, v in card.contexts.items() if not v["identifiable"]],
+             "best_reactive": best, "d_reactive": delta(c, "best_response", best),
+             "d_adherence": delta(c, "best_response", "wrong_adherence"),
+             "d_workflow": {e.split(":", 1)[1]: delta(c, "best_response", e) for e in egos[c] if e.startswith("wrong_workflow:")},
+             "d_context": {e.split(":", 1)[1]: delta(c, "best_response", e) for e in egos[c] if e.startswith("flip:")},
+             "guards_best_response": mean(c, "best_response", judge, "guards"), "guard_bar": bar,
+             "twin_adherence": adh / opp if opp else None,
+             "best_ego_judge": max(egos[c], key=lambda e: mean(c, e, judge))}
+        out["cards_result"][c] = r
+    # pass (plan v4, 5)
+    lo = lambda d: d["lo"] is not None and d["lo"] > 0
+    cr = out["cards_result"]
+    wf_of = {c: cr[c]["workflow"] for c in main}
+    crossover = {}
+    for wf in sorted(set(wf_of.values())):
+        pair = [c for c in main if wf_of[c] == wf]
+        crossover[wf] = len(pair) == 2 and all(cr[c]["d_adherence"]["mean"] > 0 for c in pair)
+    adh_ok = [c for c in main if lo(cr[c]["d_adherence"])]
+    checks = {
+        "d_reactive>0 on every main card": all(lo(cr[c]["d_reactive"]) for c in main),
+        "d_adherence>0 on >=4 of 6 main cards": len(adh_ok) >= 4,
+        "d_adherence>0 on a card of each workflow": all(any(wf_of[c] == wf for c in adh_ok) for wf in set(wf_of.values())),
+        "crossover within each workflow": all(crossover.values()),
+        "guards rare with best_response": all(cr[c]["guards_best_response"] <= cr[c]["guard_bar"] for c in main),
+    }
+    out.update(crossover=crossover, checks=checks, pass_=all(checks.values()))
+    return out
+
+
+def format_v0(res: Dict) -> str:
+    f = lambda d: "-" if d.get("mean") is None else (f"{d['mean']:+6.1f} [{d['lo']:+6.1f},{d['hi']:+6.1f}]"
+                                                     if d.get("lo") is not None else f"{d['mean']:+6.1f}")
+    L = [f"V0 (plan v4): {res['layout']}, menu {res['menu']}, timers {res['deadlines']}, view radius "
+         f"{res['view_radius']}, horizon {res['horizon']}; calibration seeds {res['calibrate']}, judge seeds "
+         f"{res['judge']}, {res['episodes']} episodes each; intervals: 95% t over judge seeds",
+         f"reference (steady pair, same episodes, judge seeds): {res['reference_judge']:.1f}", "",
+         "== crossover (judge seeds): score minus reference / expired orders / guards per episode =="]
+    for c in res["cards"]:
+        L.append(f"  {c}")
+        for e in res["egos"][c]:
+            t = res["table"][f"{c}|{e}"]
+            L.append(f"    {e:<28}{t['vs_ref']:+7.1f}{t['expired']:6.2f}{t['guards']:6.2f}")
+    L += ["", "== per card: best_response minus ... (judge seeds) =="]
+    for c, r in res["cards_result"].items():
+        adh = r["adherence"] if isinstance(r["adherence"], str) else "mixed"
+        L.append(f"  {c} ({r['workflow']} / {adh}; twin adherence "
+                 f"{100 * r['twin_adherence']:.0f}%; not identifiable: {r['not_identifiable'] or 'none'})")
+        L.append(f"    d_reactive  (vs {r['best_reactive']}): {f(r['d_reactive'])}")
+        L.append(f"    d_adherence (vs wrong_adherence): {f(r['d_adherence'])}")
+        for wf, d in r["d_workflow"].items():
+            L.append(f"    d_workflow  (vs {wf}): {f(d)}")
+        for cx, d in r["d_context"].items():
+            L.append(f"    per context (vs {cx} flipped): {f(d)}")
+        L.append(f"    guards with best_response {r['guards_best_response']:.2f} (bar {r['guard_bar']:.2f}); "
+                 f"best ego on judge seeds: {r['best_ego_judge']}")
+    L += ["", "crossover within workflow (best_response beats wrong_adherence on both cards): "
+          + ", ".join(f"{k} {'yes' if v else 'no'}" for k, v in res["crossover"].items())]
+    L += [f"  {'PASS' if v else 'fail'}  {k}" for k, v in res["checks"].items()]
+    L.append(f"V0: {'PASS' if res['pass_'] else 'FAIL'}")
+    return "\n".join(L)
+
+
 def context_rule_screen(layout: str, menu: List[str], deadlines: Dict, seeds: List[int], horizon: int = 300,
                         view_radius=2, open_orders: int = 2, workers: int = 1) -> Dict:
     """Value of each context rule alone: twin with that rule only; proactive ego for it vs steady
@@ -443,12 +607,34 @@ def main(argv=None):
     ap.add_argument("--workers", type=int, default=1, help="--rules / --gate0: parallel episodes")
     ap.add_argument("--gate0", type=Path, help="plan v3 Gate 0: context cards (e.g. configs/coop/personas/batch_ctx.yaml)")
     ap.add_argument("--context-rules", action="store_true", help="plan v3: value of each context rule alone")
+    ap.add_argument("--v0", type=Path, help="plan v4 V0: two-axis cards (configs/coop/personas/batch_style.yaml)")
+    ap.add_argument("--episodes", type=int, default=3, help="--v0: episodes per seed")
+    ap.add_argument("--log", type=Path, help="--v0: append the setting and the pass checks to this JSON-lines file")
     ap.add_argument("--slack", type=float, default=1.5, help="--gate0: order timer slack")
     ap.add_argument("--reference", type=str, help="--gate0: JSON {dish: reference steps} (coop.deadlines)")
     ap.add_argument("--urgent-steps", type=int, default=15, help="--gate0: theta, steps left that make an order urgent")
     ap.add_argument("--expiry-penalty", type=float, default=20)
     ap.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
+    if args.v0:
+        dl = {"slack": args.slack, "reference": json.loads(args.reference), "urgent_steps": args.urgent_steps,
+              "expiry_penalty": args.expiry_penalty}
+        res = v0(args.v0, args.layout, args.menu, dl, args.seeds, args.eval_seeds, args.episodes, args.horizon,
+                 args.view_radius, args.open_orders, args.workers)
+        print(format_v0(res))
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(res, indent=1, default=str))
+            print(f"wrote {args.out}")
+        log = args.log or (args.out.parent / "v0_tuning_log.jsonl" if args.out else None)
+        if log:
+            row = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "deadlines": dl, "view_radius": args.view_radius,
+                   "menu": args.menu, "layout": args.layout, "seeds": [args.seeds, args.eval_seeds],
+                   "episodes": args.episodes, "checks": res["checks"], "pass": res["pass_"],
+                   "out": str(args.out) if args.out else None}
+            with open(log, "a") as fh:
+                fh.write(json.dumps(row) + "\n")
+        return
     if args.gate0 or args.context_rules:
         dl = {"slack": args.slack, "reference": json.loads(args.reference), "urgent_steps": args.urgent_steps,
               "expiry_penalty": args.expiry_penalty}

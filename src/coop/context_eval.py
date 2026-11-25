@@ -16,7 +16,10 @@ partner (adherent), at a decision where:
   cooking or serving the urgent order (unless that is its own order); ``waits`` -> it neither
   clears nor uses a blocked kind; ``continues`` -> it does not cook a dish whose prepared items
   wait; and with no context at all, ``default_work``: ``prep`` -> a prep step (fetch from a
-  dispenser, load or start a board or blender); ``whole`` -> it serves its own order.
+  dispenser, load or start a board or blender); ``whole`` -> it serves its own order;
+  ``station`` (plan v4) -> a station step (load or start a pot or oven, take food out of one,
+  plate) and not a fetch, a cut or a delivery; with ``station`` loads and deliveries are judged
+  too (they are not choices).
 
 ego (aligned), with the first rule (card order) whose context holds, else ``default_work``:
 the complement of the partner's mode (the card's ``wants`` line), e.g. ``takes`` -> it does not
@@ -38,7 +41,8 @@ EMPTY = {"urgent": [], "blocked": [], "prep_ready": []}
 
 
 class ContextRules(Check):
-    def __init__(self, rules: List[Rule], library, kitchen):
+    def __init__(self, rules: List[Rule], library, kitchen, style: bool = False):
+        self.style = style            # plan v4 cards: the judging fixes below apply to them only
         self.rules = [r for r in rules if r.id in CONTEXT_RULE_IDS]
         self.lib, self.k = library, kitchen
         self.rule = self.rules[0] if self.rules else None
@@ -67,6 +71,20 @@ class ContextRules(Check):
         return (ev.verb in ("put", "start") and self.kind(ev.utensil) in COOK_KINDS) or ev.verb in ("fill", "deliver") \
             or (ev.verb == "pickup" and self.kind(ev.utensil) in COOK_KINDS)
 
+    def station_step(self, ev: Event) -> bool:
+        """The station cook's work (plan v4): loading or starting a pot or oven, taking food out
+        of one, plating."""
+        from .context_partner import STATION_PLATES
+        return (ev.verb in ("put", "start", "pickup") and self.kind(ev.utensil) in COOK_KINDS) or \
+            (ev.verb == "fill" and STATION_PLATES)
+
+    def non_station_step(self, ev: Event) -> bool:
+        return self.prep_step(ev) or ev.verb == "deliver"
+
+    def workflow(self) -> Optional[str]:
+        r = self.by_id.get("default_work")
+        return r.p["mode"] if r is not None else None
+
     def uses_kind(self, ev: Event, kinds: List[str]) -> bool:
         return ev.verb in ("put", "start") and self.kind(ev.utensil) in kinds
 
@@ -75,6 +93,10 @@ class ContextRules(Check):
         return dish is not None and dish in ev.dishes
 
     def cook_of(self, ev: Event, dishes: List[str]) -> bool:
+        """Cooking or serving one of ``dishes``; taking food out of a pot or oven (to free it for
+        them) counts too."""
+        if self.style and ev.verb == "pickup" and self.kind(ev.utensil) in COOK_KINDS:
+            return True
         return any(d in ev.dishes for d in dishes) and not self.prep_step(ev)
 
     # -- context at the decision ---------------------------------------------
@@ -120,11 +142,14 @@ class ContextRules(Check):
         out: List[Judgment] = []
         if "default_work" in self.by_id and self.by_id["default_work"].p["mode"] == "whole":
             self._update_own(ctx)
+        station = self.workflow() == "station"
         for ev in ctx.events:
             prep = "default_work" in self.by_id and self.by_id["default_work"].p["mode"] == "prep"
-            if ev.who == "partner" and (self.decision(ev) or (prep and ev.verb == "put" and self.kind(ev.utensil) in COOK_KINDS)):
+            extra = station and (ev.verb == "deliver" or (ev.verb == "put" and self.kind(ev.utensil) in COOK_KINDS))
+            if ev.who == "partner" and (self.decision(ev) or extra
+                                        or (prep and ev.verb == "put" and self.kind(ev.utensil) in COOK_KINDS)):
                 out += self._partner(ctx, ev)
-            elif ev.who == "ego" and self.decision(ev):
+            elif ev.who == "ego" and (self.decision(ev) or extra):
                 out += self._ego(ctx, ev)
         return out
 
@@ -164,7 +189,10 @@ class ContextRules(Check):
         for r in self.rules:
             m = r.p.get("mode")
             if r.id == "on_urgent" and U:                 # keeps (or takes while the ego is on it)
-                bad = self.serves(ev, U[0]) and not self.prep_step(ev) and U[0] != mine
+                if self.workflow() == "station":          # keeps working the station: no fetch, cut or serve for it
+                    bad = self.serves(ev, U[0]) and self.non_station_step(ev)
+                else:
+                    bad = self.serves(ev, U[0]) and not self.prep_step(ev) and U[0] != mine
                 out.append(self.J(ctx, r, "partner", not bad, f"{what} (urgent {U[0]})"))
             elif r.id == "on_blocked" and B:              # waits
                 bad = self.clearing(ev, B, ctx, others_only=True) or self.uses_kind(ev, B)
@@ -178,6 +206,9 @@ class ContextRules(Check):
                 # preparing is adherent, cooking or serving is not; moving prepared items is neither
                 if self.prep_step(ev) or self.cook_serve_step(ev):
                     out.append(self.J(ctx, r, "partner", self.prep_step(ev), what))
+            elif r.p["mode"] == "station":
+                if self.station_step(ev) or self.non_station_step(ev):
+                    out.append(self.J(ctx, r, "partner", self.station_step(ev), what))
             else:
                 out.append(self.J(ctx, r, "partner", mine is None or self.serves(ev, mine), f"{what} (own order {mine})"))
         return out
@@ -205,6 +236,10 @@ class ContextRules(Check):
             return []
         if r.p["mode"] == "prep":
             return [self.J(ctx, r, "ego", not self.prep_step(ev), what)]
+        if r.p["mode"] == "station":
+            if self.station_step(ev) or self.non_station_step(ev):
+                return [self.J(ctx, r, "ego", not self.station_step(ev), what)]
+            return []
         theirs = self.own if self.own in f["open"] else None
         ok = theirs is None or not self.serves(ev, theirs)
         return [self.J(ctx, r, "ego", ok, f"{what} (partner's order {theirs})")]
@@ -243,6 +278,12 @@ class ContextRules(Check):
             food = any(self.k.utensil_status(view, u)[0] == "finished" and self.k.kind_of[u] in COOK_KINDS
                        for u in self.k.utensils)
             if (held is not None and (held.name == "dish" or held.name not in self.k.raw)) or (held is None and food):
+                self.label = r.label()
+                return render(r, "reminder", self.lib, self.k)
+            return None
+        if r.p["mode"] == "station":                       # when choosing, or holding food to serve
+            if held is None or held.catagory == "with_dish" or held.name in self.k.recipes and not any(
+                    held.name in self.k.recipes[x][1] for x in self.k.recipes):
                 self.label = r.label()
                 return render(r, "reminder", self.lib, self.k)
             return None

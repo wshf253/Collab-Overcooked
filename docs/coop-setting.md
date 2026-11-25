@@ -1076,6 +1076,57 @@ bash scripts/run_qwen38_days.sh configs/coop/days_persona.yaml --conditions tom_
 python -m coop.learning outputs/persona_pilot --out outputs/persona_pilot/learning.json
 ```
 
+## Plan v4: two-axis partners (`docs/STYLE_PARTNER_PLAN_v4.md`)
+
+**Cards** (`configs/coop/personas/batch_style.yaml`): each card is a workflow and a plan
+adherence; the loader (`coop.rules.expand_style`) expands it into v3 context rules.
+
+| workflow | the twin does | the best response (ego) |
+|---|---|---|
+| `prep` | fetch and cut for every order, raw items for pots / ovens on a counter by the cooking area | cook, plate, serve |
+| `whole` | one order start to finish, then the next | the other order start to finish |
+| `station` (new) | load pots / ovens with what was brought (held, on a counter, from an oven), start, take out, plate; plated food on a counter; looks around only at the cooking stations | fetch, cut, bring cooking items to a counter by the cooking area, serve |
+
+| adherence | on_urgent | on_blocked | on_prep_ready |
+|---|---|---|---|
+| `rigid` | keeps | waits | continues |
+| `flexible` | takes (unless the ego is on it) | clears | switches |
+
+- `station` fixes `on_blocked` and `on_prep_ready` (it clears and cooks as its own work): those
+  pairs carry no rule and are marked `not_identifiable` (`Card.contexts`).
+- `mixed` (diagnostic): `prep`, flexible on urgent orders, rigid otherwise.
+- The loader rejects contradictions: an unknown workflow or adherence, a per-context map that
+  misses a context, a map on a workflow that fixes contexts, both `rules` and `workflow`.
+- Ground truth: `Card.latent` (workflow, adherence) and `Card.contexts` (mode or
+  not_identifiable), written into `partner_truth.json`.
+- Backstories: `style_only` and `style_habits` per card. These are drafts, frozen after review
+  before V2.
+- **Twin** (`ContextPlayer(..., near_cooking=True, latent=card.latent)`): hands cooking items
+  over on counters next to the cooking area (walkable cells next to a pot or oven, plus the
+  dish dispenser since the station cook plates: `context_partner.cooking_area`). It lists every
+  job before the rules choose (the v3 twin missed the cooking jobs a context rule should switch
+  to; v3 cards keep the old behaviour). Every decision logs the latent labels, the mode
+  applied, and whether the twin was inside the ego's view. Adherence 98–100% on every card
+  (steady ego, 8 seeds).
+- **Evaluator:** `station` choices (a station step vs a fetch, cut or delivery; loads and
+  deliveries are judged too). For v4 cards only (`RuleEvaluator(style=True)`), taking food out
+  of a pot or oven counts as acting on waiting prepared items.
+
+**V0** (`coop.voi --v0 CARDS`): egos per card, judged with the twin partner:
+- `best_response`: proactive on the card;
+- `wrong_adherence`: the same workflow, the opposite adherence;
+- `wrong_workflow:<wf>`: the same adherence, each other workflow;
+- `flip:<context>`: one context's adherence flipped, for the per-context value. This
+  approximates the plan's "Δs restricted to each context's events": it is a whole-episode
+  score difference;
+- the reactive set: `steady`, `always_take_urgent`, `never_take_urgent`, `wait_and_see:3/6/10`.
+  The best one is chosen on the calibration seeds.
+
+It reports the crossover table (score minus a steady pair on the same episodes, expired
+orders, guards) and per card Δ_reactive, Δ_adherence, Δ_workflow and Δ per context, with 95% t
+intervals over the judge seeds. Then the pass checks of plan §5. `--log` appends the setting
+and the checks to a JSON-lines tuning log.
+
 ## API backends (`docs/API_BACKEND_PLAN.md`, W1–W4)
 
 Hosted models as the ego (or the LLM partner), next to the local vLLM server. Code:
