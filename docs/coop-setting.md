@@ -1127,6 +1127,14 @@ orders, guards) and per card Δ_reactive, Δ_adherence, Δ_workflow and Δ per c
 intervals over the judge seeds. Then the pass checks of plan §5. `--log` appends the setting
 and the checks to a JSON-lines tuning log.
 
+V0 command (CPU, about 5 minutes on 4 cores):
+
+    PYTHONPATH=src:lib/overcooked_ai python -m coop.voi --v0 configs/coop/personas/batch_style.yaml \
+      --layout open_ing2_env --menu boiled_potato_slices baked_carrot_soup sliced_carrot_and_potato_stew \
+      --open-orders 2 --view-radius 2 --slack 1.5 --urgent-steps 15 --expiry-penalty 20 \
+      --reference '{"boiled_potato_slices": 48, "baked_carrot_soup": 68, "sliced_carrot_and_potato_stew": 57.5}' \
+      --seeds 0 1 2 3 --eval-seeds 4 5 6 7 --episodes 3 --workers 4 --out outputs/v0/v0_s1.5_t15.json
+
 ## API backends (`docs/API_BACKEND_PLAN.md`, W1–W4)
 
 Hosted models as the ego (or the LLM partner), next to the local vLLM server. Code:

@@ -241,6 +241,49 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.29 Plan v4 W0–W3: two-axis partners built; V0 fails in all 8 settings tried (2026-11-25)
+Plan: `docs/STYLE_PARTNER_PLAN_v4.md`.
+- **W0:** v3 W1–W2 all existed: timers with expiry, context features, duplication check,
+  context rules without fallbacks, deadlock guard, twin context rules, proactive and reactive egos.
+- **W1:** `batch_style.yaml` (6 main cards + `mixed`), the loader expansion, the `station`
+  workflow, `not_identifiable` pairs (station × on_blocked / on_prep_ready), and twin logging.
+  Twin adherence is 98–100% on every card. The backstories are drafts.
+- **W2:** `coop.voi --v0`.
+
+**V0 setting:** twin partner, scripted egos, `open_ing2_env`, 3 pilot dishes, 2 open orders,
+radius 2; calibration seeds 0–3, judge seeds 4–7, 3 episodes each.
+
+Δ = best_response minus the named ego, judge seeds, mean (* = 95% interval above 0, − = below):
+
+| card | Δ_reactive | Δ_adherence | Δ_workflow | BR vs steady pair |
+|---|---|---|---|---|
+| (slack 1.5, θ 15) prep_rigid | −12 | **+72*** | +38*, +142* | −102 |
+| prep_flexible | −22 | −23 | +15, +83* | −127 |
+| whole_rigid | **+52*** | +12 | +80*, +147* | −13 |
+| whole_flexible | −2 | −2 | +67*, +113* | −35 |
+| station_rigid | −12 | +18 | +78*, −8 | −113 |
+| station_flexible | −23− | −10 | +85*, −5 | −110 |
+| mixed | −32− | +12 | +17, +132* | −110 |
+
+Same picture in all 8 settings (slack 1.0 / 1.25 / 1.5 / 2.0 / 2.5, θ 15 / 25, expiry 20 / 40;
+every run is in `outputs/v0/v0_tuning_log.jsonl`). Only "guards rare" passes; the other four
+checks fail everywhere.
+- **Workflow knowledge is worth a lot:** +40 to +150 against a prep or whole belief. Station vs
+  whole is about 0.
+- **Adherence knowledge pays for `prep_rigid` in every setting** (+58 to +120*), and for
+  `mixed` at slack 1.0 / 2.0 / 2.5. For flexible partners the informed ego is not better, and
+  is often worse (prep_flexible −8 to −47): handling the events yourself costs little when the
+  partner handles them too. No crossover within any workflow.
+- **The reactive `steady` ego beats best_response on prep and station cards** (Δ_reactive −12
+  to −68): those teams score 100–180 below a steady pair. **Likely cause:** our best_response
+  is a strict complement. It never does the partner's part, even when it has nothing else to
+  do, so a strict hand-off workflow wastes the ego's time. A "complement first, then anything
+  useful" best response is the obvious next thing to test (W2 design, not tuning).
+- Tighter timers raise expiries (up to 7 per episode at slack 1.0) without creating
+  crossover; looser ones lower them, and the pattern stays.
+- **Open points:** the station cook plates (`STATION_PLATES = True`); `mixed` stays `prep`
+  (prep_rigid has the largest adherence value).
+
 ### 3.28 Decision test by pair; recipe-guard learning run (`decision_urgent`, `days_ctx_guard`, 2026-11-23)
 **Decision test, first choice by pair** (first move on the urgent order: told `keeps` /
 told `takes` / no description):
