@@ -1,0 +1,16 @@
+layout: open_ing2_env
+horizon: 150
+tail: sliced_carrot_and_potato_stew
+pairs:
+  - [boiled_carrot_slices, baked_potato_soup]
+  - [boiled_potato_slices, baked_carrot_soup]
+counters: [[3, 0], [5, 0]]
+agent:
+  backend:
+    type: openai_compat
+    base_url_env: ICRL_LLM_BASE_URL
+    model_env: ICRL_LLM_MODEL
+    model: qwen3.8-27b
+    api_key_env: ICRL_LLM_API_KEY
+    chat_template_kwargs_env: COOP_CHAT_TEMPLATE_KWARGS
+    params: {temperature: 0.0}
