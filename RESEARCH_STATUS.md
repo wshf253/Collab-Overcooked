@@ -241,6 +241,34 @@ The code differs: the new probe has a pace line and new options, which also chan
     an absent partner on this map. `tom_memory` gains +15 with it and swap loses that (−14.5). The
     likely lesson in the notes is "do everything yourself".
 
+### 3.30 V0 with a "complement first, then anything useful" best response (`--soft`, 2026-11-26)
+Informed egos use policy `proactive_soft`: they do the card's complement first, and do
+anything useful when there is nothing of their own to do. Two settings (slack 1.5 / θ 15 and
+slack 2.0 / θ 25); still only 1 of 5 checks.
+
+| card | Δ_reactive strict → soft (1.5/15) | Δ_adherence strict → soft | soft, 2.0/25: Δ_reactive / Δ_adherence | BR vs steady pair, soft 1.5/15 |
+|---|---|---|---|---|
+| prep_rigid | −12 → +12 | **+72* → −5** | +2 / −7 | −78 (strict −102) |
+| prep_flexible | −22 → +20 | −23 → −8 | +32 / +8 | −85 (−127) |
+| whole_rigid | +52* → +38 | +12 → −13 | +30 / −7 | −27 (−13) |
+| whole_flexible | −2 → +20 | −2 → +28 | +25 / +13 | −13 (−35) |
+| station_rigid | −12 → −55− | +18 → +17 | −55− / +22 | −157 (−113) |
+| station_flexible | −23− → −70− | −10 → −2 | −45 / +7 | −157 (−110) |
+
+- **Δ_reactive:** the soft best response turns it positive on every prep and whole card (+2
+  to +38, intervals still include 0 with 4 judge seeds), and the prep teams score better.
+  The strict complement was the cause.
+- **Δ_adherence collapses to about 0 everywhere,** prep_rigid included (+72 → −5). Once the
+  ego fills gaps, a wrong adherence belief costs nothing: the events are cheap to cover
+  either way. The earlier adherence value existed only because a strict ego left contexts
+  uncovered.
+- **The station workflow is a poor partner here:** the soft ego's own loading collides with
+  the station cook (−157 vs a steady pair), and the wrong-workflow egos beat the station best
+  response (Δ_workflow −48 to −90).
+- **Reading (plan §10, first row):** only the workflow has value, and it shows in one
+  episode. Next per the plan: raise event frequency or cost (tighter slack with a higher
+  expiry penalty), with the soft egos. Station: redefine or keep as workflow-only.
+
 ### 3.29 Plan v4 W0–W3: two-axis partners built; V0 fails in all 8 settings tried (2026-11-25)
 Plan: `docs/STYLE_PARTNER_PLAN_v4.md`.
 - **W0:** v3 W1–W2 all existed: timers with expiry, context features, duplication check,

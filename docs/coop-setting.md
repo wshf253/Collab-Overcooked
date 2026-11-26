@@ -1124,7 +1124,9 @@ adherence; the loader (`coop.rules.expand_style`) expands it into v3 context rul
 
 It reports the crossover table (score minus a steady pair on the same episodes, expired
 orders, guards) and per card Δ_reactive, Δ_adherence, Δ_workflow and Δ per context, with 95% t
-intervals over the judge seeds. Then the pass checks of plan §5. `--log` appends the setting
+intervals over the judge seeds. Then the pass checks of plan §5. `--soft`: the informed egos
+use policy `proactive_soft` (the complement first, then anything useful) instead of the
+strict complement. `--log` appends the setting
 and the checks to a JSON-lines tuning log.
 
 V0 command (CPU, about 5 minutes on 4 cores):
