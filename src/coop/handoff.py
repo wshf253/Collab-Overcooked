@@ -19,6 +19,17 @@ PROFILES = {
     "owner": "This teammate usually leaves a prepared item for the cook who prepared it.",
     "relay": "This teammate usually picks up a prepared item left by the other cook and finishes that dish.",
 }
+# These conventions apply equally when the teammate is the preparer or the receiver.
+CONVENTIONS = {
+    "owner": "This teammate expects whoever prepared the ingredients to finish that dish.",
+    "relay": "This teammate expects the cook who did not prepare the ingredients to finish that dish.",
+}
+
+
+def takes_prepared(partner, preparer):
+    return (partner == "owner") == (preparer == "partner")
+
+
 CONDITIONS = ("none", "correct", "swapped", "observed")
 CHOICES = ("prepared", "second")
 
@@ -45,7 +56,7 @@ def rollout(cfg, scene, partner, choice):
     pos = tuple(scene["counter"])
     item = prepared.removeprefix("boiled_")
     state.objects[pos] = ObjectState(item, "ingredient", pos)
-    partner_target = prepared if partner == "relay" else second
+    partner_target = prepared if takes_prepared(partner, scene.get("preparer", "ego")) else second
     ego_target = prepared if choice == "prepared" else second
     cooks = []
     for index in range(2):
@@ -53,31 +64,52 @@ def rollout(cfg, scene, partner, choice):
         cook = OrderCook(target, second if target == prepared else prepared, menu)
         cook.reset(env.mdp, index, 0, view_radius=None)
         cooks.append(cook)
+    pickup = None
+    partner_index = 1 - scene["slot"]
     with contextlib.redirect_stdout(io.StringIO()):
         while not env.done:
             moves = [cook.act(env.state, env.t) for cook in cooks]
             env.step([m[0] for m in moves], [m[1] for m in moves])
+            held = env.state.players[partner_index].held_object
+            if pickup is None and held is not None:
+                pickup = {"item": held.name, "step": env.t}
             if all(d not in env.state.order_list for d in scene["pair"]):
                 break
     records = env.summary()["orders"][:2]
     times = [o.get("completed_t") for o in records]
     return {"completed": sum(t is not None for t in times), "steps": env.t,
-            "completion_times": times, "partner_first_job":
+            "partner_first_pickup": pickup, "completion_times": times, "partner_first_job":
             next(iter(cooks[1-scene["slot"]].decision_log), None)}
 
 
-def screen(cfg):
+def screen(cfg, role_reversal=False):
     rows = []
     for pair, slot, counter, reverse in product(cfg["pairs"], (0, 1), cfg["counters"], (False, True)):
         scene = dict(pair=pair, slot=slot, counter=counter, tickets=pair[::-1] if reverse else pair)
+        if role_reversal:
+            scene["preparer"] = "partner"
         trials = {p: {c: rollout(cfg, scene, p, c) for c in CHOICES} for p in PROFILES}
         winners = {}
         for p, choices in trials.items():
             ranks = {c: (r["completed"], -r["steps"]) for c, r in choices.items()}
             if len(set(ranks.values())) == 2:
                 winners[p] = max(ranks, key=ranks.get)
+        expected = {p: "second" if takes_prepared(p, scene.get("preparer", "ego")) else "prepared"
+                    for p in PROFILES}
         rows.append(dict(scene=scene, trials=trials, winners=winners,
-                         kept=winners == {"owner": "prepared", "relay": "second"}))
+                         kept=winners == expected))
+    if role_reversal:
+        for row in rows:
+            scene = row["scene"]
+            demo_pair = next(pair for pair in cfg["pairs"] if pair != scene["pair"])
+            demo = dict(scene, pair=demo_pair, tickets=demo_pair, preparer="ego")
+            pickups = {p: rollout(cfg, demo, p, "prepared")["partner_first_pickup"] for p in PROFILES}
+            # A player's held item is public. A scripted job's destination is private.
+            expected_items = {"owner": demo_pair[1].split("_")[1],
+                              "relay": demo_pair[0].removeprefix("boiled_")}
+            visible = all(pickups[p] and pickups[p]["item"] == expected_items[p] for p in PROFILES)
+            row["demo"] = {"scene": demo, "pickups": pickups, "distinguishable": visible}
+            row["kept"] = row["kept"] and visible
     return rows
 
 
@@ -86,8 +118,15 @@ def messages(scene, partner, condition, question, flipped, style, history):
     other = "relay" if partner == "owner" else "owner"
     info = "There is no history with this teammate."
     if condition in ("correct", "swapped"):
-        info = PROFILES[partner if condition == "correct" else other]
-    if condition == "observed":
+        profiles = CONVENTIONS if scene.get("preparer") == "partner" else PROFILES
+        info = profiles[partner if condition == "correct" else other]
+    if condition == "observed" and "pickups" in history:
+        demo = history["scene"]
+        item = history["pickups"][partner]["item"]
+        info = (f"In an earlier round, the orders were {', '.join(demo['tickets'])}. "
+                f"You left slices for {demo['pair'][0]} on the counter. "
+                f"The next item you saw your teammate pick up was {item}.")
+    elif condition == "observed":
         demo = history["scene"]
         job = history["trials"][partner]["prepared"]["partner_first_job"]["job"]
         info = (f"In an earlier round the tickets were {demo['tickets'][0]} and {demo['tickets'][1]}. "
@@ -105,6 +144,10 @@ def messages(scene, partner, condition, question, flipped, style, history):
         f"You are at {positions[slot]}. Your teammate is at {positions[1 - slot]}.",
         info,
     ]
+    if scene.get("preparer") == "partner":
+        facts[1] = (f"Your teammate prepared slices for {prepared} and left them on the shared counter "
+                    f"at {scene['counter']}. Work on {second} has not started. "
+                    "Both cooks saw your teammate put down the slices.")
     if style == "structured":
         facts = [f"{label}\n{fact}" for label, fact in
                  zip(("Orders", "Recent actions", "Positions", "Partner information"), facts)]
@@ -125,7 +168,7 @@ def evaluate(cfg, rows, out):
     for i, row in enumerate(rows):
         if not row["kept"]:
             continue
-        history = next(r for r in rows if r["scene"]["pair"] != row["scene"]["pair"]
+        history = row.get("demo") or next(r for r in rows if r["scene"]["pair"] != row["scene"]["pair"]
                        and r["scene"]["slot"] == row["scene"]["slot"])
         for p, cond, flip, style in product(PROFILES, CONDITIONS, (False, True), ("compact", "structured")):
             for task, question in (("predict", "Which ticket will your teammate work on first?"),
@@ -142,7 +185,7 @@ def evaluate(cfg, rows, out):
                 answer = (parse_json(json.loads(path.read_text())["reply"]) or {}).get("choice")
                 selected = dishes[("A","B").index(answer)] if answer in ("A","B") else None
                 pair = row["scene"]["pair"]
-                target = (pair[0 if p == "relay" else 1] if task == "predict"
+                target = (pair[0 if takes_prepared(p, row["scene"].get("preparer", "ego")) else 1] if task == "predict"
                           else pair[CHOICES.index(row["winners"][p])])
                 groups[style, cond, task].append(dict(scene=i, pair=pair, partner=p, flipped=flip,
                                                selected=selected, correct=selected == target, reply=path.name))
@@ -178,15 +221,28 @@ def main():
     ap.add_argument("config")
     ap.add_argument("--stage", choices=("screen", "qwen"), required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--role-reversal", action="store_true",
+                    help="ego prepares in the observed demonstration; teammate prepares in the test")
     args = ap.parse_args()
     cfg = load(args.config)
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / "screen.json"
-    identity = hashlib.sha256(Path(args.config).read_bytes() + Path(__file__).read_bytes()).hexdigest()
+    identity = hashlib.sha256(Path(args.config).read_bytes() + Path(__file__).read_bytes()
+                              + str(args.role_reversal).encode()).hexdigest()
     if args.stage == "screen":
-        rows = screen(cfg)
+        rows = screen(cfg, args.role_reversal)
         dump(path, dict(version=identity, rows=rows))
-        print(f"{sum(r['kept'] for r in rows)}/{len(rows)} switching scenes")
+        if args.role_reversal:
+            examples = []
+            for i, row in enumerate(rows):
+                if row["kept"]:
+                    for partner in PROFILES:
+                        prompt, _ = messages(row["scene"], partner, "observed",
+                                             "Which ticket will your teammate work on first?",
+                                             False, "compact", row["demo"])
+                        examples.append({"scene": i, "prompt": prompt[0]["content"]})
+            dump(args.out / "observed_prompts.json", examples)
+        print(f"{sum(r['kept'] for r in rows)}/{len(rows)} eligible scenes")
     else:
         data = json.loads(path.read_text())
         if data["version"] != identity or not any(r["kept"] for r in data["rows"]):
