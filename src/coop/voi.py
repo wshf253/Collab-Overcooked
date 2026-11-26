@@ -373,7 +373,7 @@ def style_egos(card) -> List[str]:
     return out + list(REACTIVE)
 
 
-def _style_ego(name: str, card, menu):
+def _style_ego(name: str, card, menu, soft: bool = False):
     from .context_partner import ContextPlayer
     from .rules import flip_adherence
     if name == "best_response":
@@ -386,7 +386,8 @@ def _style_ego(name: str, card, menu):
         target = flip_adherence(card, contexts=[name.split(":", 1)[1]])
     else:
         return _ctx_ego(name, {}, None, menu)
-    return ContextPlayer(target.rules, menu, "ego", "proactive", name=name, near_cooking=True)
+    return ContextPlayer(target.rules, menu, "ego", "proactive_soft" if soft else "proactive", name=name,
+                         near_cooking=True)
 
 
 def _style_job(arg):
@@ -394,7 +395,8 @@ def _style_job(arg):
     from .partner import SimulatedHuman
     from .persona_check import play_rule_episode
     from .rules import load_cards
-    card_path, card, ego, seed, ep, menu, layout, horizon, view_radius, open_orders, deadlines = arg
+    card_path, card, ego, seed, ep, menu, layout, horizon, view_radius, open_orders, deadlines = arg[:11]
+    soft = arg[11] if len(arg) > 11 else False
     eseed = seed * 1000 + ep
     if card is None:                            # reference: a steady pair on the same episode
         from .deadlines import play_pair
@@ -402,7 +404,7 @@ def _style_job(arg):
         return {"score": s["score"]}
     c = load_cards(card_path)[card]
     twin = ContextPlayer(c.rules, list(menu), "partner", "card", name=card, near_cooking=True, latent=c.latent)
-    player = _style_ego(ego, c, list(menu))
+    player = _style_ego(ego, c, list(menu), soft)
     r = play_rule_episode(list(menu), layout, horizon, eseed, c.rules, player, view_radius, open_orders,
                           deadlines=deadlines, order_mode="controlled", partner_player=twin)
     adh = sum(row["partner"]["adherent"] for row in r["rules"].values())
@@ -413,7 +415,7 @@ def _style_job(arg):
 
 def v0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calibrate: List[int], judge: List[int],
        episodes: int = 3, horizon: int = 300, view_radius=2, open_orders: int = 2, workers: int = 1,
-       guard_factor: float = 2.0, main: Optional[List[str]] = None) -> Dict:
+       guard_factor: float = 2.0, main: Optional[List[str]] = None, soft: bool = False) -> Dict:
     """Plan v4 V0: does each axis have value? Crossover of egos x cards (score minus a steady
     pair on the same episode, expired orders, guard firings) and, per card, paired intervals over
     the judge seeds of best_response minus the best reactive ego (chosen on the calibration
@@ -425,7 +427,7 @@ def v0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calibrat
     egos = {n: style_egos(c) for n, c in cards.items()}
     seeds = list(calibrate) + list(judge)
     eps = range(episodes)
-    jobs = [(str(cards_path), n, e, s, k, list(menu), layout, horizon, view_radius, open_orders, deadlines)
+    jobs = [(str(cards_path), n, e, s, k, list(menu), layout, horizon, view_radius, open_orders, deadlines, soft)
             for n in cards for e in egos[n] for s in seeds for k in eps]
     jobs += [(None, None, "reference", s, k, list(menu), layout, horizon, view_radius, open_orders, deadlines)
              for s in seeds for k in eps]
@@ -447,7 +449,7 @@ def v0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calibrat
         return paired_ci([per_seed(c, a, s) - per_seed(c, b, s) for s in judge])
 
     out: Dict[str, Any] = {"cards": list(cards), "main": main, "egos": egos, "calibrate": list(calibrate),
-                           "judge": list(judge), "episodes": episodes, "deadlines": deadlines,
+                           "judge": list(judge), "episodes": episodes, "deadlines": deadlines, "soft": soft,
                            "view_radius": view_radius, "layout": layout, "menu": list(menu), "horizon": horizon,
                            "reference_judge": statistics.fmean(ref[s] for s in judge), "table": {}, "cards_result": {}}
     for c, card in cards.items():
@@ -492,7 +494,8 @@ def v0(cards_path: Path, layout: str, menu: List[str], deadlines: Dict, calibrat
 def format_v0(res: Dict) -> str:
     f = lambda d: "-" if d.get("mean") is None else (f"{d['mean']:+6.1f} [{d['lo']:+6.1f},{d['hi']:+6.1f}]"
                                                      if d.get("lo") is not None else f"{d['mean']:+6.1f}")
-    L = [f"V0 (plan v4): {res['layout']}, menu {res['menu']}, timers {res['deadlines']}, view radius "
+    L = [("informed egos: complement first, then anything useful (--soft)\n" if res.get("soft") else "")
+         + f"V0 (plan v4): {res['layout']}, menu {res['menu']}, timers {res['deadlines']}, view radius "
          f"{res['view_radius']}, horizon {res['horizon']}; calibration seeds {res['calibrate']}, judge seeds "
          f"{res['judge']}, {res['episodes']} episodes each; intervals: 95% t over judge seeds",
          f"reference (steady pair, same episodes, judge seeds): {res['reference_judge']:.1f}", "",
@@ -609,6 +612,8 @@ def main(argv=None):
     ap.add_argument("--context-rules", action="store_true", help="plan v3: value of each context rule alone")
     ap.add_argument("--v0", type=Path, help="plan v4 V0: two-axis cards (configs/coop/personas/batch_style.yaml)")
     ap.add_argument("--episodes", type=int, default=3, help="--v0: episodes per seed")
+    ap.add_argument("--soft", action="store_true", help="--v0: informed egos do their complement first, then "
+                    "anything useful (policy proactive_soft) instead of only their complement")
     ap.add_argument("--log", type=Path, help="--v0: append the setting and the pass checks to this JSON-lines file")
     ap.add_argument("--slack", type=float, default=1.5, help="--gate0: order timer slack")
     ap.add_argument("--reference", type=str, help="--gate0: JSON {dish: reference steps} (coop.deadlines)")
@@ -620,7 +625,7 @@ def main(argv=None):
         dl = {"slack": args.slack, "reference": json.loads(args.reference), "urgent_steps": args.urgent_steps,
               "expiry_penalty": args.expiry_penalty}
         res = v0(args.v0, args.layout, args.menu, dl, args.seeds, args.eval_seeds, args.episodes, args.horizon,
-                 args.view_radius, args.open_orders, args.workers)
+                 args.view_radius, args.open_orders, args.workers, soft=args.soft)
         print(format_v0(res))
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -628,7 +633,7 @@ def main(argv=None):
             print(f"wrote {args.out}")
         log = args.log or (args.out.parent / "v0_tuning_log.jsonl" if args.out else None)
         if log:
-            row = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "deadlines": dl, "view_radius": args.view_radius,
+            row = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "soft": args.soft, "deadlines": dl, "view_radius": args.view_radius,
                    "menu": args.menu, "layout": args.layout, "seeds": [args.seeds, args.eval_seeds],
                    "episodes": args.episodes, "checks": res["checks"], "pass": res["pass_"],
                    "out": str(args.out) if args.out else None}

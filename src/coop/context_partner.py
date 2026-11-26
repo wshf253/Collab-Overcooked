@@ -46,7 +46,8 @@ from .rules import CONTEXT_RULE_IDS, Rule
 PREP_KINDS = {"chopping_board", "blender"}
 COOK_KINDS = {"pot", "oven"}
 GUARD_STEPS = 30
-EGO_POLICIES = ("proactive", "steady", "always_take_urgent", "never_take_urgent", "wait_and_see")
+EGO_POLICIES = ("proactive", "proactive_soft", "steady", "always_take_urgent", "never_take_urgent", "wait_and_see")
+INFORMED = ("proactive", "proactive_soft")
 
 
 STATION_PLATES = True     # plan v4, open point 12: the station cook plates (and the ego serves)
@@ -225,7 +226,7 @@ class ContextPlayer(RulePlayer):
         if self.mode == "partner":
             return (self.policy == "card" and not self.guard_active
                     and any(r.id == "default_work" and r.p["mode"] == "prep" for r in self.ctx_rules))
-        return self.policy == "proactive" and self._workflow() == "station"
+        return self.policy in INFORMED and self._workflow() == "station"
 
     def _handoff(self):
         if not self.near_cooking:
@@ -352,7 +353,7 @@ class ContextPlayer(RulePlayer):
         return jobs, "none"
 
     def _jobs(self):
-        if self.latent is not None and self.mode == "partner":
+        if (self.latent is not None and self.mode == "partner") or self.policy == "proactive_soft":
             # plan v4 cards: list every job (cooking ones too) before the rules choose; the "do
             # not cook" setting of the previous step must not hide the jobs a context rule may
             # switch to (the v3 twin keeps its old behaviour: it missed some of them)
@@ -369,8 +370,12 @@ class ContextPlayer(RulePlayer):
                 self._regime = "guard"
                 return jobs
             sel, why = self._apply(jobs, ctx, self.ctx_rules, ego=False)
-        elif self.policy == "proactive":
+        elif self.policy in INFORMED:
             sel, why = self._apply(jobs, ctx, self.ctx_rules, ego=True)
+            if not sel and self.policy == "proactive_soft" and jobs:
+                # complement first, then anything useful (plan v4 V0 follow-up): with nothing of
+                # its own part to do, it does the partner's part rather than idle
+                sel, why = jobs, "fallback"
         else:
             sel, why = self._reactive(jobs, ctx)
         self._regime = "default" if why in ("default_work", "none") else why
@@ -426,7 +431,7 @@ class ContextEgoAgent(Agent):
                  card: str = "", align: str = "own"):
         from .rules import load_library, parse_rule
         lib = load_library()
-        self.rules = [parse_rule(r, lib) for r in rules] if policy == "proactive" else []
+        self.rules = [parse_rule(r, lib) for r in rules] if policy in INFORMED else []
         self.menu, self.policy, self.k, self.card, self.align = list(menu), policy, int(k), card, align
         self.memory: Dict[str, Any] = {}
 
